@@ -1,55 +1,110 @@
+import random
 import re
 import time
 import requests
-
+from datetime import datetime
+from argparse import ArgumentParser
+from pathlib import Path
 from src.config import DATA_DIR
 
 # --- CONFIGURATION ---
-TARGET_GAME_COUNT = 50  # Set to a small number for testing (e.g., 50), increase later (e.g., 1000)
-# OUTPUT_FILE = "app_ids.txt"
-OUTPUT_FILE = DATA_DIR / "app_ids.txt"
-
-BASE_SEARCH_URL = "https://store.steampowered.com/search/?filter=topsellers&category1=998"
+TARGET_GAME_COUNT = 15000  
+STEAM_CATEGORY_1 = 998 
+BASE_SEARCH_URL = f"https://store.steampowered.com/search/?sort_by=Reviews_DESC&category1={STEAM_CATEGORY_1}"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+# Define our safe file paths
+TEMP_FILE = DATA_DIR / "app_ids_temp.txt"
+
+# =============================================================================
+# ARGPARSER CONFIG
+# =============================================================================
+
+parser = ArgumentParser(description="Harvest Steam App IDs from the Steam Store search pages.")
+parser.add_argument("--target", type=int, default=TARGET_GAME_COUNT, help="Number of unique App IDs to collect.")
+parser.add_argument("--start_page", type=int, default=1, help="Page to start harvesting from.")
+args = parser.parse_args()
+
 def extract_app_ids(html_content):
-    """Regex pattern to capture app IDs from game links (e.g., href="https://store.steampowered.com/app/1086940/...")"""
     pattern = r'href=["\']https://store\.steampowered\.com/app/(\d+)/'
     matches = re.findall(pattern, html_content)
-    # Deduplicate while preserving order
     seen = set()
     return [app_id for app_id in matches if not (app_id in seen or seen.add(app_id))]
 
-def harvest_app_ids():
-    collected_ids = set()
-    page = 1
-    
-    print(f"--- STARTING APP ID COLLECTION (Target: {TARGET_GAME_COUNT}) ---")
+def get_latest_save_file():
+    """Finds the most recent timestamped app_ids_*.txt file in DATA_DIR."""
+    # glob finds all files matching the pattern, and sorted() puts the newest timestamp last
+    files = list(DATA_DIR.glob("app_ids_*.txt"))
+    if not files:
+        return None
+    return sorted(files)[-1]
 
-    while len(collected_ids) < TARGET_GAME_COUNT:
+def harvest_app_ids(target_count=TARGET_GAME_COUNT, start_page=1):
+    # Using a dictionary to preserve the exact ranking order of the games
+    collected_ids = {}
+    page = start_page
+    
+    # --- SMART APPENDING (CHECKPOINTING) ---
+    latest_file = get_latest_save_file()
+    if latest_file:
+        print(f"--- CHECKPOINT FOUND: {latest_file.name} ---")
+        with open(latest_file, "r", encoding="utf-8") as f:
+            for line in f:
+                app_id = line.strip()
+                if app_id:
+                    collected_ids[app_id] = None  # Dict keys act as an ordered set
+        print(f"Loaded {len(collected_ids)} existing IDs into memory.")
+        
+        if len(collected_ids) >= target_count:
+            print("Target already reached in the checkpoint file! Exiting.")
+            return
+
+    print(f"\n--- STARTING APP ID COLLECTION (Target: {target_count}) ---")
+    print(f"Writing to temporary safe file: {TEMP_FILE.name}")
+
+    while len(collected_ids) < target_count:
         url = f"{BASE_SEARCH_URL}&page={page}"
         print(f"Fetching search page {page}...")
 
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
+            
             if response.status_code == 200:
                 ids_found = extract_app_ids(response.text)
                 
                 if not ids_found:
-                    print("No more games found or reached the end of search results.")
+                    print("No more games found. Steam may cut off search results at this page limit.")
                     break
 
-                # Add new unique IDs
                 initial_count = len(collected_ids)
-                collected_ids.update(ids_found)
+                
+                # Add new IDs to our ordered dictionary
+                for app_id in ids_found:
+                    if app_id not in collected_ids:
+                        collected_ids[app_id] = None
+                        
                 new_added = len(collected_ids) - initial_count
 
-                print(f"  -> Page {page}: Found {len(ids_found)} IDs ({new_added} new). Total collected: {len(collected_ids)}")
+                print(f"  -> Page {page}: Found {len(ids_found)} IDs ({new_added} new). Total: {len(collected_ids)} / {target_count}")
                 
+                # ATOMIC WRITE: Safely overwrite the temp file with the ordered list
+                with open(TEMP_FILE, "w", encoding="utf-8") as f:
+                    for app_id in list(collected_ids.keys())[:target_count]:
+                        f.write(f"{app_id}\n")
+
                 page += 1
-                time.sleep(1) # Polite delay to avoid hammering the server
+                
+                # RANDOMIZED HUMAN-LIKE DELAY
+                sleep_time = random.uniform(2.5, 4.5)
+                time.sleep(sleep_time)
+
+            elif response.status_code == 429:
+                print("  -> ERROR 429: Rate limited! Sleeping for 60 seconds...")
+                time.sleep(60)
+                continue
+                
             else:
                 print(f"Failed to load page {page}. Status code: {response.status_code}")
                 break
@@ -58,15 +113,13 @@ def harvest_app_ids():
             print(f"Error occurred on page {page}: {e}")
             break
 
-    # Truncate to exact target count if we overshot
-    final_ids = list(collected_ids)[:TARGET_GAME_COUNT]
-
-    # Save IDs to file
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for app_id in final_ids:
-            f.write(f"{app_id}\n")
-
-    print(f"\nSuccessfully saved {len(final_ids)} App IDs to '{OUTPUT_FILE}'.")
+    # VERSIONING: Once the loop finishes, rename the temp file with a new timestamp
+    if TEMP_FILE.exists() and len(collected_ids) > 0:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        final_file = DATA_DIR / f"app_ids_{timestamp}.txt"
+        
+        TEMP_FILE.rename(final_file)
+        print(f"\n--- SUCCESS: Data safely versioned and saved to {final_file.name} ---")
 
 if __name__ == "__main__":
-    harvest_app_ids()
+    harvest_app_ids(target_count=args.target, start_page=args.start_page)

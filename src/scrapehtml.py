@@ -89,11 +89,13 @@ def process_games():
 
             # Skip download if we already have the raw HTML saved locally
             if os.path.exists(file_path):
+                print(f"[{idx}/{len(app_ids)}] Loading cached HTML for app_id {app_id}...")
                 with open(file_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
             else:
+                print(f"[{idx}/{len(app_ids)}] Downloading HTML for app_id {app_id}...")
                 url = f"https://store.steampowered.com/app/{app_id}/"
-                print(f"[{idx}/{len(app_ids)}] Downloading {url}...")
+                # print(f"[{idx}/{len(app_ids)}] Downloading {url}...")
                 try:
                     response = requests.get(url, headers=HEADERS, cookies=COOKIES, timeout=10)
                     if response.status_code == 200:

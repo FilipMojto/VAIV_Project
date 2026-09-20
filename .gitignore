@@ -218,4 +218,12 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Custom additions
-data/**
+data/**/*.txt
+data/**/*.tsv
+data/**/*.html
+data/**/*.json
+data/**/*.csv
+data/**/*.zip
+data/**/*.tar
+data/**/*.gz
+data/**/*.bz2
