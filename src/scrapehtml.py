@@ -1,14 +1,17 @@
+from argparse import ArgumentParser
 import os
+from pathlib import Path
 import re
 import time
 import requests
 import csv
 
-from src.config import DATA_DIR
+from src.config import DATA_DIR, HARVEST_FILE_NAME
+from src.versioning import SmartVersioner
 
 # --- CONFIGURATION ---
 # INPUT_FILE = "app_ids.txt"
-INPUT_FILE = DATA_DIR / "app_ids.txt"
+# INPUT_FILE = DATA_DIR / "app_ids.txt"
 OUTPUT_DIR = DATA_DIR / "raw_htmls"
 OUTPUT_TSV = DATA_DIR / "steam_games.tsv"
 
@@ -27,6 +30,11 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept-Language": "en-US,en;q=0.9" 
 }
+
+parser = ArgumentParser(description="Scrape and parse Steam game metadata from raw HTML files.")
+parser.add_argument("--input", type=Path, default=HARVEST_FILE_NAME, help=f"Path to the input file containing app IDs. Default: {HARVEST_FILE_NAME}")
+parser.add_argument("--smart_append", action="store_true", help="Enable smart appending to resume from the last checkpoint.")
+args = parser.parse_args()
 
 def clean_html_text(text):
     """Removes HTML tags and normalizes whitespace."""
@@ -66,22 +74,31 @@ def parse_game_html(app_id, html_content):
 
     return game_data
 
-def process_games():
+def process_games(input_file: Path, smart_append: bool = False):
     # Define our dataset schema
     headers = ["app_id", "game_title", "developer", "publisher", "release_date", 
                "is_singleplayer", "is_multiplayer", "min_ram_gb", "min_storage_gb"]
     
-    file_exists = os.path.isfile(OUTPUT_TSV)
-    
-    with open(OUTPUT_TSV, "a", newline='', encoding="utf-8") as tsv_file:
+    harvest_versioner = SmartVersioner(base_filename=input_file.stem, data_dir=input_file.parent)
+    scraper_versioner = SmartVersioner(
+        base_filename=OUTPUT_TSV.stem,
+        data_dir=OUTPUT_TSV.parent,
+        extension=OUTPUT_TSV.suffix,
+    )
+
+    harvest_file = harvest_versioner.open_latest_save_file()
+    if harvest_file:
+        with harvest_file:
+            app_ids = [line.strip() for line in harvest_file if line.strip()]
+    else:
+        print("No harvested app IDs found. Please run the ID harvester first. Exiting.")
+        return
+
+    print(f"--- STARTING SCRAPE & PARSE FOR {len(app_ids)} GAMES ---")
+
+    with open(scraper_versioner.temp_file, "w", newline='', encoding="utf-8") as tsv_file:
         writer = csv.DictWriter(tsv_file, fieldnames=headers, delimiter='\t')
-        if not file_exists:
-            writer.writeheader()
-
-        with open(INPUT_FILE, "r") as f:
-            app_ids = [line.strip() for line in f if line.strip()]
-
-        print(f"--- STARTING SCRAPE & PARSE FOR {len(app_ids)} GAMES ---")
+        writer.writeheader()
 
         for idx, app_id in enumerate(app_ids, 1):
             file_path = os.path.join(OUTPUT_DIR, f"{app_id}.html")
@@ -116,5 +133,7 @@ def process_games():
                 writer.writerow(game_data)
                 print(f"  -> Parsed: {game_data.get('game_title', 'Unknown Title')} | {game_data.get('developer', 'Unknown Dev')}")
 
+    scraper_versioner.dump_temp_to_final()
+
 if __name__ == "__main__":
-    process_games()
+    process_games(args.input, smart_append=args.smart_append)
