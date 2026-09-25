@@ -83,7 +83,7 @@ class SmartVersioner:
                 print("Target already reached in the checkpoint file! Exiting.")
                 return
 
-    def append_existing_tsv_rows(self, writer: csv.DictWriter, collected_ids: dict):
+    def append_existing_tsv_rows(self, writer: csv.DictWriter, collected_ids: dict, id_column: str = "app_id"):
         """Copies the latest TSV checkpoint into ``writer`` and records its app IDs."""
         latest_file = self.open_latest_save_file()
         if not latest_file:
@@ -92,7 +92,7 @@ class SmartVersioner:
         with latest_file as tsv_file:
             reader = csv.DictReader(tsv_file, delimiter="\t")
             for row in reader:
-                app_id = (row.get("app_id") or "").strip()
+                app_id = (row.get(id_column) or "").strip()
                 if not app_id or app_id in collected_ids:
                     continue
                 writer.writerow(row)

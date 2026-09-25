@@ -227,3 +227,5 @@ data/**/*.zip
 data/**/*.tar
 data/**/*.gz
 data/**/*.bz2
+
+src/bgg_browser_profile/

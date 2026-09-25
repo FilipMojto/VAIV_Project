@@ -1,4 +1,3 @@
-
 from contextlib import contextmanager
 import sys
 
@@ -6,7 +5,7 @@ import sys
 @contextmanager
 def safe_interrupt_handler(on_interrupt=None):
     """
-    Context manager that catches Ctrl+C inside its block, 
+    Context manager that catches Ctrl+C inside its block,
     runs a cleanup callback if provided, and exits cleanly.
     """
     try:
