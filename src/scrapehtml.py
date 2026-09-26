@@ -1,208 +1,3 @@
-# from argparse import ArgumentParser
-# import os
-# from pathlib import Path
-# import re
-# import time
-# import requests
-# import csv
-# from tqdm import tqdm
-
-# from src.properties import safe_interrupt_handler
-# from src.config import DATA_DIR, HARVEST_FILE_NAME
-# from src.versioning import SmartVersioner
-
-# # --- CONFIGURATION ---
-# OUTPUT_DIR = DATA_DIR / "raw_htmls"
-# OUTPUT_TSV = DATA_DIR / "steam_games.tsv"
-
-# # Create a directory to store the raw HTML files locally
-# os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# # Cookies to bypass Steam's age-gate for mature games
-# COOKIES = {
-#     "birthtime": "283993201",
-#     "lastagecheckage": "1-0-1979",
-#     "wants_mature_content": "1",
-# }
-
-# # Force English language to ensure our Regex matches consistently
-# HEADERS = {
-#     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-#     "Accept-Language": "en-US,en;q=0.9",
-# }
-
-# parser = ArgumentParser(
-#     description="Scrape and parse Steam game metadata from raw HTML files."
-# )
-# parser.add_argument(
-#     "--input",
-#     type=Path,
-#     default=HARVEST_FILE_NAME,
-#     help=f"Path to the input file containing app IDs. Default: {HARVEST_FILE_NAME}",
-# )
-# parser.add_argument(
-#     "--smart_append",
-#     action="store_true",
-#     help="Enable smart appending to resume from the last checkpoint.",
-# )
-# args = parser.parse_args()
-
-
-# def clean_html_text(text):
-#     """Removes HTML tags and normalizes whitespace."""
-#     if not text:
-#         return ""
-#     text = re.sub(r"<[^>]+>", "", text)
-#     return re.sub(r"\s+", " ", text).strip()
-
-
-# def parse_game_html(app_id, html_content):
-#     """Extracts game metadata using Regular Expressions."""
-#     game_data = {"app_id": app_id}
-
-#     # 1. Title
-#     title_match = re.search(
-#         r'<div class="apphub_AppName"[^>]*>(.*?)</div>', html_content
-#     )
-#     game_data["game_title"] = (
-#         clean_html_text(title_match.group(1)) if title_match else ""
-#     )
-
-#     # 2. Developer & Publisher
-#     dev_match = re.search(r"Developer:.*?<a[^>]*>(.*?)</a>", html_content, re.DOTALL)
-#     game_data["developer"] = clean_html_text(dev_match.group(1)) if dev_match else ""
-
-#     pub_match = re.search(r"Publisher:.*?<a[^>]*>(.*?)</a>", html_content, re.DOTALL)
-#     game_data["publisher"] = clean_html_text(pub_match.group(1)) if pub_match else ""
-
-#     # 3. Release Date
-#     date_match = re.search(r'<div class="date">(.*?)</div>', html_content)
-#     game_data["release_date"] = (
-#         clean_html_text(date_match.group(1)) if date_match else ""
-#     )
-
-#     # 4. Binary Features (Checking for specific Steam category strings)
-#     game_data["is_singleplayer"] = "Single-player" in html_content
-#     game_data["is_multiplayer"] = (
-#         "Multi-player" in html_content or "Online Co-op" in html_content
-#     )
-
-#     # 5. System Requirements (Extracting raw numbers for RAM and Storage)
-#     ram_match = re.search(r"Memory:</strong>\s*(\d+)\s*GB", html_content, re.IGNORECASE)
-#     game_data["min_ram_gb"] = ram_match.group(1) if ram_match else ""
-
-#     storage_match = re.search(
-#         r"Storage:</strong>\s*(\d+)\s*GB", html_content, re.IGNORECASE
-#     )
-#     game_data["min_storage_gb"] = storage_match.group(1) if storage_match else ""
-
-#     return game_data
-
-
-# def process_games(input_file: Path, smart_append: bool = False):
-#     # Define our dataset schema
-#     headers = [
-#         "app_id",
-#         "game_title",
-#         "developer",
-#         "publisher",
-#         "release_date",
-#         "is_singleplayer",
-#         "is_multiplayer",
-#         "min_ram_gb",
-#         "min_storage_gb",
-#         "html_file_path",
-#     ]
-
-#     harvest_versioner = SmartVersioner(
-#         base_filename=input_file.stem, data_dir=input_file.parent
-#     )
-#     scraper_versioner = SmartVersioner(
-#         base_filename=OUTPUT_TSV.stem,
-#         data_dir=OUTPUT_TSV.parent,
-#         extension=OUTPUT_TSV.suffix,
-#     )
-
-#     harvest_file = harvest_versioner.open_latest_save_file()
-#     if harvest_file:
-#         with harvest_file:
-#             app_ids = dict.fromkeys(
-#                 line.strip() for line in harvest_file if line.strip()
-#             )
-#     else:
-#         tqdm.write("No harvested app IDs found. Please run the ID harvester first. Exiting.")
-#         return
-
-#     # ``newline`` controls physical line endings; the TSV separator belongs to
-#     # DictWriter's ``delimiter`` argument below.
-#     # Wrap execution in try...except KeyboardInterrupt so Ctrl+C triggers a clean save
-#     with safe_interrupt_handler(on_interrupt=scraper_versioner.dump_temp_to_final):
-#         with scraper_versioner.write_to_temp(newline="") as tsv_file:
-#             writer = csv.DictWriter(tsv_file, fieldnames=headers, delimiter="\t")
-#             writer.writeheader()
-
-#             scraped_ids = {}
-#             if smart_append:
-#                 tqdm.write("Smart appending enabled. Checking for existing scraped data...")
-#                 scraper_versioner.append_existing_tsv_rows(writer, scraped_ids)
-
-#             pending_app_ids = [app_id for app_id in app_ids if app_id not in scraped_ids]
-#             already_scraped_count = len(app_ids) - len(pending_app_ids)
-
-#             tqdm.write(
-#                 f"--- STARTING SCRAPE & PARSE FOR {len(pending_app_ids)} GAMES "
-#                 f"({already_scraped_count} already scraped) ---"
-#             )
-
-#             # for idx, app_id in enumerate(pending_app_ids, 1):
-#             for idx, app_id in tqdm(enumerate(pending_app_ids, 1), total=len(pending_app_ids), desc="Downloading HTMLs", unit="game"):
-#                 file_path = os.path.join(OUTPUT_DIR, f"{app_id}.html")
-#                 html_content = ""
-
-#                 # Skip download if we already have the raw HTML saved locally
-#                 if os.path.exists(file_path):
-#                     # print(
-#                     #     f"[{idx}/{len(pending_app_ids)}] Loading cached HTML for app_id {app_id}..."
-#                     # )
-#                     tqdm.write(f"[{idx}/{len(pending_app_ids)}] Loading cached HTML for app_id {app_id}...")
-#                     with open(file_path, "r", encoding="utf-8") as f:
-#                         html_content = f.read()
-#                 else:
-#                     tqdm.write(f"[{idx}/{len(pending_app_ids)}] Downloading HTML for app_id {app_id}...")
-                    
-#                     url = f"https://store.steampowered.com/app/{app_id}/"
-
-#                     try:
-#                         response = requests.get(
-#                             url, headers=HEADERS, cookies=COOKIES, timeout=10
-#                         )
-#                         if response.status_code == 200:
-#                             html_content = response.text
-#                             with open(file_path, "w", encoding="utf-8") as f:
-#                                 f.write(html_content)
-#                             time.sleep(1.5)  # Polite delay to avoid rate-limiting
-#                         else:
-#                             tqdm.write(f"  -> Failed. Status: {response.status_code}")
-#                             continue
-#                     except Exception as e:
-#                         tqdm.write(f"  -> Error: {e}")
-#                         continue
-
-#                 # Parse the HTML and append to our dataset
-#                 if html_content:
-#                     game_data = parse_game_html(app_id, html_content)
-#                     game_data["html_file_path"] = file_path
-#                     writer.writerow(game_data)
-#                     tqdm.write(
-#                         f"  -> Parsed: {game_data.get('game_title', 'Unknown Title')} | {game_data.get('developer', 'Unknown Dev')}"
-#                     )
-
-#         scraper_versioner.dump_temp_to_final()
-
-
-# if __name__ == "__main__":
-#     process_games(args.input, smart_append=args.smart_append)
-
 import os
 import re
 import time
@@ -257,8 +52,10 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     title_match = re.search(r'<meta property="og:title" content="(.*?)(?:\s\(\d{4}\))?"', html_content)
     game_data["game_title"] = clean_html_text(title_match.group(1)) if title_match else ""
 
-    year_match = re.search(r'<span[^>]*class="game-year"[^>]*>\((.*?)\)</span>', html_content)
-    game_data["release_year"] = clean_html_text(year_match.group(1)) if year_match else ""
+    # year_match = re.search(r'<span[^>]*class="game-year"[^>]*>\((.*?)\)</span>', html_content)
+    # game_data["release_year"] = clean_html_text(year_match.group(1)) if year_match else ""
+    year_match = re.search(r'<span[^>]*class="game-year"[^>]*>\s*\(\s*(\d+)\s*\)\s*</span>', html_content)
+    game_data["release_year"] = year_match.group(1) if year_match else ""
 
     desc_match = re.search(r'<meta name="description" content="(.*?)"', html_content)
     game_data["short_description"] = clean_html_text(desc_match.group(1)) if desc_match else ""
@@ -267,25 +64,253 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     game_data["avg_rating"] = rating_match.group(1) if rating_match else ""
 
     # HRÁČI A ČAS (Príklady pre štruktúrované dáta v BGG)
-    players_match = re.search(r'gameplayers[^>]*>.*?(\d+\s*–\s*\d+|\d+)\s*Players', html_content, re.IGNORECASE | re.DOTALL)
-    game_data["num_of_players"] = clean_html_text(players_match.group(1)) if players_match else ""
+    # players_match = re.search(r'gameplayers[^>]*>.*?(\d+\s*–\s*\d+|\d+)\s*Players', html_content, re.IGNORECASE | re.DOTALL)
+    # game_data["num_of_players"] = clean_html_text(players_match.group(1)) if players_match else ""
+    # Extrakcia minimálneho a maximálneho počtu hráčov z <meta> tagov
+    min_match = re.search(r'<meta[^>]*itemprop="minValue"[^>]*content="(\d+)"', html_content)
+    max_match = re.search(r'<meta[^>]*itemprop="maxValue"[^>]*content="(\d+)"', html_content)
 
-    time_match = re.search(r'gameplaytime[^>]*>.*?(\d+\s*–\s*\d+|\d+)\s*Min', html_content, re.IGNORECASE | re.DOTALL)
-    game_data["playing_time"] = clean_html_text(time_match.group(1)) if time_match else ""
+    min_players = min_match.group(1) if min_match else ""
+    max_players = max_match.group(1) if max_match else ""
 
-    weight_match = re.search(r'Weight:.*?<span[^>]*>(.*?)</span>', html_content, re.IGNORECASE | re.DOTALL)
-    game_data["weight"] = clean_html_text(weight_match.group(1)) if weight_match else ""
+    # Formátovanie výstupu (napr. "1–4" alebo "1" ak sa min a max rovnajú)
+    if min_players and max_players:
+        if min_players == max_players:
+            game_data["num_of_players"] = min_players
+        else:
+            game_data["num_of_players"] = f"{min_players}–{max_players}"
+    elif min_players or max_players:
+        game_data["num_of_players"] = min_players or max_players
+    else:
+        game_data["num_of_players"] = ""
+
+    # --- playing_time ---
+    min_time_match = re.search(r'<meta[^>]*itemprop="minplaytime"[^>]*content="(\d+)"', html_content, re.IGNORECASE)
+    max_time_match = re.search(r'<meta[^>]*itemprop="maxplaytime"[^>]*content="(\d+)"', html_content, re.IGNORECASE)
+
+    # Fallback regex in case meta tags are structured inside Angular JSON
+    if not min_time_match:
+        min_time_match = re.search(r'"minplaytime"\s*:\s*"?(\d+)"?', html_content)
+    if not max_time_match:
+        max_time_match = re.search(r'"maxplaytime"\s*:\s*"?(\d+)"?', html_content)
+
+    min_time = min_time_match.group(1) if min_time_match else ""
+    max_time = max_time_match.group(1) if max_time_match else ""
+
+    # Format playing time string
+    if min_time and max_time:
+        if min_time == max_time:
+            game_data["playing_time"] = f"{min_time} Min"
+        else:
+            game_data["playing_time"] = f"{min_time}–{max_time} Min"
+    elif min_time or max_time:
+        game_data["playing_time"] = f"{min_time or max_time} Min"
+    else:
+        game_data["playing_time"] = ""
+
+    # --- weight ---
+    # Extrakcia náročnosti / váhy hry (weight)
+    weight_match = re.search(
+        r'<span[^>]*item-poll-button="boardgameweight"[^>]*>(.*?)</span>',
+        html_content,
+        re.DOTALL
+    )
+
+    if weight_match:
+        raw_weight = clean_html_text(weight_match.group(1))
+        # Zachytí desatinné číslo (napr. "2.34" z textu "2.34 / 5")
+        num_match = re.search(r'(\d+(?:\.\d+)?)', raw_weight)
+        game_data["weight"] = num_match.group(1) if num_match else ""
+    else:
+        # Záložný regex pre raw HTML (údaje v vstavanom JSON objekte BGG)
+        json_weight = re.search(r'"averageweight"\s*:\s*"?(\d+(?:\.\d+)?)"?', html_content)
+        game_data["weight"] = json_weight.group(1) if json_weight else ""
+    # weight_match = re.search(r'Weight:.*?<span[^>]*>(.*?)</span>', html_content, re.IGNORECASE | re.DOTALL)
+    # game_data["weight"] = clean_html_text(weight_match.group(1)) if weight_match else ""
 
     # OSTATNÉ POLIA (Placeholder pre tvoje vlastné Regexy podľa HTML)
-    game_data["num_of_ratings"] = "" 
-    game_data["num_of_comments"] = ""
-    game_data["age"] = ""
-    game_data["alternate_names"] = ""
-    game_data["designer"] = ""
-    game_data["artist"] = ""
-    game_data["publisher"] = ""
-    game_data["description"] = ""
-    game_data["awards_honors"] = ""
+    # game_data["num_of_ratings"] = "" 
+    # game_data["num_of_comments"] = ""
+    # Extract Number of Ratings
+    ratings_match = re.search(
+        r'<a[^>]*href="[^"]*/ratings\?rated=1"[^>]*>\s*(.*?)\s*</a>',
+        html_content
+    )
+    game_data["num_of_ratings"] = clean_html_text(ratings_match.group(1)) if ratings_match else ""
+
+    # Extract Number of Comments
+    comments_match = re.search(
+        r'<a[^>]*href="[^"]*/ratings\?comment=1"[^>]*>\s*(.*?)\s*</a>',
+        html_content
+    )
+    game_data["num_of_comments"] = clean_html_text(comments_match.group(1)) if comments_match else ""
+    
+    # game_data["age"] = ""
+    # --- age ---
+    # Extract minimum age
+    age_match = re.search(
+        r'<span[^>]*itemprop="suggestedMinAge"[^>]*>\s*(\d+)\s*</span>', 
+        html_content
+    )
+
+    # Fallback in case raw JSON data is matched
+    if not age_match:
+        age_match = re.search(r'"minage"\s*:\s*"?(\d+)"?', html_content)
+
+    game_data["age"] = f"{age_match.group(1)}+" if age_match else ""
+    # --- alternate_names ---
+    # Extract all alternate names from the page
+    alt_names_matches = re.findall(
+        r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
+        html_content,
+        re.DOTALL
+    )
+
+    if alt_names_matches:
+        # Clean text and filter out empty strings
+        cleaned_names = [clean_html_text(name) for name in alt_names_matches if clean_html_text(name)]
+        
+        # Remove duplicates while preserving original order
+        unique_names = list(dict.fromkeys(cleaned_names))
+        
+        # Join with pipe separator so commas inside titles won't disrupt parsing
+        game_data["alternate_names"] = " | ".join(unique_names)
+    else:
+        # Fallback regex for embedded JSON data in the HTML source
+        json_alt_matches = re.findall(r'"alternatenames"\s*:\s*\[(.*?)\]', html_content, re.DOTALL)
+        if json_alt_matches:
+            names_in_json = re.findall(r'"name"\s*:\s*"([^"]+)"', json_alt_matches[0])
+            game_data["alternate_names"] = " | ".join(dict.fromkeys(names_in_json))
+        else:
+            game_data["alternate_names"] = ""
+    # game_data["alternate_names"] = ""
+    # --- designer ---
+    # Extract all designers
+    designer_matches = re.findall(
+        r'<a[^>]*href="[^"]*/boardgamedesigner/\d+/[^"]*"[^>]*>\s*(.*?)\s*</a>',
+        html_content,
+        re.DOTALL
+    )
+
+    if designer_matches:
+        # Clean HTML text for each designer name
+        cleaned_designers = [clean_html_text(d) for d in designer_matches if clean_html_text(d)]
+        
+        # Deduplicate while preserving order
+        unique_designers = list(dict.fromkeys(cleaned_designers))
+        
+        # Join multiple designers with a comma (e.g., "Bruno Cathala, Antoine Bauza")
+        game_data["designer"] = ", ".join(unique_designers)
+    else:
+        # Fallback for embedded JSON data in raw HTML
+        json_designers = re.findall(r'"boardgamedesigner"\s*:\s*\[(.*?)\]', html_content, re.DOTALL)
+        if json_designers:
+            names = re.findall(r'"name"\s*:\s*"([^"]+)"', json_designers[0])
+            game_data["designer"] = ", ".join(dict.fromkeys(names))
+        else:
+            game_data["designer"] = ""
+    # game_data["designer"] = ""
+    # --- artist ---
+    # Extract all artists
+    artist_matches = re.findall(
+        r'<a[^>]*href="[^"]*/boardgameartist/\d+/[^"]*"[^>]*>\s*(.*?)\s*</a>',
+        html_content,
+        re.DOTALL
+    )
+
+    if artist_matches:
+        # Clean HTML text for each artist name
+        cleaned_artists = [clean_html_text(a) for a in artist_matches if clean_html_text(a)]
+        
+        # Deduplicate while preserving order
+        unique_artists = list(dict.fromkeys(cleaned_artists))
+        
+        # Join multiple artists with a comma
+        game_data["artist"] = ", ".join(unique_artists)
+    else:
+        # Fallback for embedded JSON data in raw HTML
+        json_artists = re.findall(r'"boardgameartist"\s*:\s*\[(.*?)\]', html_content, re.DOTALL)
+        if json_artists:
+            names = re.findall(r'"name"\s*:\s*"([^"]+)"', json_artists[0])
+            game_data["artist"] = ", ".join(dict.fromkeys(names))
+        else:
+            game_data["artist"] = ""
+    # game_data["artist"] = ""
+    # --- publisher ---
+    # Extract all publishers by strictly matching text inside the anchor tags
+    # Skip the DOM entirely to bypass lazy-loading truncation
+    # Target the complete list stored in BGG's embedded JSON object
+    json_block = re.search(r'"boardgamepublisher"\s*:\s*\[(.*?)\]', html_content, re.DOTALL)
+
+    publishers = []
+    if json_block:
+        # Extract all "name" values from the matched JSON array
+        json_names = re.findall(r'"name"\s*:\s*"([^"]+)"', json_block.group(1))
+        
+        for name in json_names:
+            # Decode unicode characters (e.g., converting "Lookout\u0020Games" to "Lookout Games")
+            decoded_name = bytes(name, "utf-8").decode("unicode_escape")
+            if decoded_name not in publishers:
+                publishers.append(decoded_name)
+
+    # Join unique publishers with a pipe separator
+    game_data["publisher"] = " | ".join(publishers)
+    # --- description ---
+    
+    # Extract the full game description
+    desc_match = re.search(
+        r'<article class="game-description-body"[^>]*>(.*?)</article>',
+        html_content,
+        re.DOTALL
+    )
+
+    if desc_match:
+        raw_desc = desc_match.group(1)
+        
+        # Strip all inner HTML tags (e.g., <p>, <em>, <br>) and replace with spaces
+        no_tags_desc = re.sub(r'<[^>]+>', ' ', raw_desc)
+        
+        # Normalize spaces and strip newlines to ensure single-line TSV compatibility
+        game_data["description"] = clean_html_text(no_tags_desc)
+    else:
+        # Fallback to BGG's embedded JSON object
+        json_desc = re.search(r'"description"\s*:\s*"(.*?)(?<!\\)"', html_content, re.DOTALL)
+        if json_desc:
+            raw_json_desc = json_desc.group(1)
+            # Decode JSON unicode escapes (e.g., \u0027 for apostrophes) and newlines (\n)
+            decoded_desc = bytes(raw_json_desc, "utf-8").decode("unicode_escape")
+            no_tags_json = re.sub(r'<[^>]+>', ' ', decoded_desc)
+            game_data["description"] = clean_html_text(no_tags_json)
+        else:
+            game_data["description"] = ""
+    # --- awards_honors ---
+    # Extract all awards and honors by strictly matching text inside the anchor tags
+    award_matches = re.findall(
+        r'<a[^>]*href="[^"]*/boardgamehonor/\d+/[^"]*"[^>]*>\s*([^<]+?)\s*</a>',
+        html_content
+    )
+
+    awards = []
+    if award_matches:
+        for a in award_matches:
+            clean_name = clean_html_text(a)
+            if clean_name and clean_name not in awards:
+                awards.append(clean_name)
+
+    # Fallback to BGG's embedded JSON object in case DOM rendering is incomplete
+    if not awards or len(awards) <= 2:
+        json_block = re.search(r'"boardgamehonor"\s*:\s*\[(.*?)\]', html_content, re.DOTALL)
+        if json_block:
+            json_names = re.findall(r'"name"\s*:\s*"([^"]+)"', json_block.group(1))
+            for name in json_names:
+                # Decode unicode characters
+                decoded_name = bytes(name, "utf-8").decode("unicode_escape")
+                if decoded_name not in awards:
+                    awards.append(decoded_name)
+
+    # Join unique awards with a pipe separator (awards often contain commas)
+    game_data["awards_honors"] = " | ".join(awards)
+    # game_data["awards_honors"] = ""
     game_data["own"] = ""
     game_data["prev_owned"] = ""
     game_data["wishlist"] = ""
