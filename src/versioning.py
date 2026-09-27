@@ -101,3 +101,10 @@ class SmartVersioner:
         print(
             f"Copied {len(collected_ids)} existing scraped games into the new checkpoint."
         )
+
+    # -----------------------------------------------------------------------------
+    # getters & setters
+    # -----------------------------------------------------------------------------
+    
+    def get_temp_file_path(self):
+        return self._temp_file

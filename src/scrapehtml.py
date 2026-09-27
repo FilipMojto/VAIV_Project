@@ -61,7 +61,61 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     game_data["short_description"] = clean_html_text(desc_match.group(1)) if desc_match else ""
 
     rating_match = re.search(r'ratingValue":\s*"([\d\.]+)"', html_content)
-    game_data["avg_rating"] = rating_match.group(1) if rating_match else ""
+    # game_data["avg_rating"] = rating_match.group(1) if rating_match else ""
+    
+    # --- avg_rating ---
+    # --- Average Rating ---
+    rating_targets = [
+        ("avg_rating", "Avg. Rating", ["averagerating", "avg_rating", "rating", "average"])
+    ]
+
+    for field_name, dom_title, json_keys in rating_targets:
+        dom_value = ""
+        item_pattern = r'<li\b[^>]*class=["\'][^"\']*\boutline-item\b[^"\']*["\'][^>]*>(.*?)</li>'
+        
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            
+            # Match the title container
+            title_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-title\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if dom_title.casefold() not in title_text:
+                continue
+
+            # Match the description container
+            description_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-description\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if description_match:
+                desc_html = description_match.group(1)
+                
+                # Extract from the anchor tag
+                value_match = re.search(r'<a\b[^>]*>(.*?)</a>', desc_html, re.IGNORECASE | re.DOTALL)
+                if value_match:
+                    raw_val = clean_html_text(value_match.group(1))
+                    # Keep digits AND the decimal point (e.g., "8.130" remains "8.130")
+                    dom_value = re.sub(r'[^\d.]', '', raw_val)
+            break
+
+        if dom_value:
+            game_data[field_name] = dom_value
+            continue
+            
+        # JSON Fallback (Floating-point safe matching)
+        found_val = ""
+        for key in json_keys:
+            json_match = re.search(rf'"{key}"\s*:\s*"?([\d.]+)"?', html_content, re.IGNORECASE)
+            if json_match:
+                found_val = json_match.group(1)
+                break
+        game_data[field_name] = found_val
 
     # HRÁČI A ČAS (Príklady pre štruktúrované dáta v BGG)
     # players_match = re.search(r'gameplayers[^>]*>.*?(\d+\s*–\s*\d+|\d+)\s*Players', html_content, re.IGNORECASE | re.DOTALL)
@@ -311,20 +365,266 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     # Join unique awards with a pipe separator (awards often contain commas)
     game_data["awards_honors"] = " | ".join(awards)
     # game_data["awards_honors"] = ""
-    game_data["own"] = ""
-    game_data["prev_owned"] = ""
-    game_data["wishlist"] = ""
-    game_data["for_trade"] = ""
-    game_data["want_in_trade"] = ""
-    game_data["has_parts"] = ""
-    game_data["wants_parts"] = ""
-    game_data["comments"] = ""
-    game_data["fans"] = ""
-    game_data["page_views"] = ""
-    game_data["overall_rank"] = ""
-    game_data["strategy_rank"] = ""
-    game_data["all_time_plays"] = ""
-    game_data["all_time_plays_this_month"] = ""
+    
+    # --- stats ---
+    # Map each field to its clean search token and expanded JSON keys
+    # Map each field to its exact DOM title and potential JSON fallback keys
+    # Unified stat extraction bypassing all HTML attributes
+    stat_targets = [
+        ("own", "Own", ["numowned", "owned"]),
+        ("prev_owned", "Prev. Owned", ["numprevowned", "prevowned"]),
+        ("for_trade", "For Trade", ["numfortrade", "fortrade"]),
+        ("want_in_trade", "Want In Trade", ["numwanting", "wanting", "numwant"]),
+        ("wishlist", "Wishlist", ["numwishing", "wishing", "wishlist", "numwishlist", "numwish"]),
+        ("has_parts", "Has Parts", ["numhasparts", "hasparts"]),
+        ("wants_parts", "Want Parts", ["numwantparts", "wantparts", "numwantingparts", "wantingparts"])
+    ]
+
+    for field_name, dom_title, json_keys in stat_targets:
+        # Each statistic is an outline-item with a title and a separate
+        # description. Match within that item so title-side links (such as
+        # "Find For Trade Matches") cannot be mistaken for the count.
+        dom_value = ""
+        item_pattern = r'<li\b[^>]*class=["\'][^"\']*\boutline-item\b[^"\']*["\'][^>]*>(.*?)</li>'
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            title_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-title\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if not re.match(rf'^{re.escape(dom_title.casefold())}\s*:', title_text):
+                continue
+
+            description_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-description\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if description_match:
+                value_match = re.search(
+                    r'<a\b[^>]*>(.*?)</a>', description_match.group(1), re.IGNORECASE | re.DOTALL
+                )
+                if value_match:
+                    dom_value = re.sub(r'[^\d]', '', clean_html_text(value_match.group(1)))
+            break
+
+        if dom_value:
+            game_data[field_name] = dom_value
+            continue
+                
+        # JSON Fallback (Runs only if the DOM block is entirely missing)
+        found_val = ""
+        for key in json_keys:
+            json_match = re.search(rf'"{key}"\s*:\s*"?(\d+)"?', html_content, re.IGNORECASE)
+            if json_match:
+                found_val = json_match.group(1)
+                break
+        game_data[field_name] = found_val
+
+    # --- Comments, Fans, and Page Views ---
+    stat_targets = [
+        ("comments", "Comments", ["numcomments", "comments"]),
+        ("fans", "Fans", ["numfans", "fans"]),
+        ("page_views", "Page Views", ["numpageviews", "pageviews", "views", "numviews"])
+    ]
+
+    for field_name, dom_title, json_keys in stat_targets:
+        dom_value = ""
+        item_pattern = r'<li\b[^>]*class=["\'][^"\']*\boutline-item\b[^"\']*["\'][^>]*>(.*?)</li>'
+        
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            
+            # Match the title container
+            title_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-title\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            # Use exact or clean inclusion match since titles like "Comments" do not have a colon
+            if dom_title.casefold() not in title_text:
+                continue
+
+            # Match the description container
+            description_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-description\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if description_match:
+                desc_html = description_match.group(1)
+                
+                # 1. Try extracting from an <a> tag first (Comments, Fans)
+                value_match = re.search(r'<a\b[^>]*>(.*?)</a>', desc_html, re.IGNORECASE | re.DOTALL)
+                if value_match:
+                    raw_val = value_match.group(1)
+                else:
+                    # 2. Fallback to raw text inside description if no <a> tag exists (Page Views)
+                    raw_val = desc_html
+                    
+                dom_value = re.sub(r'[^\d]', '', clean_html_text(raw_val))
+            break
+
+        if dom_value:
+            game_data[field_name] = dom_value
+            continue
+            
+        # JSON Fallback (Runs only if the DOM block is missing)
+        found_val = ""
+        for key in json_keys:
+            json_match = re.search(rf'"{key}"\s*:\s*"?(\d+)"?', html_content, re.IGNORECASE)
+            if json_match:
+                found_val = json_match.group(1)
+                break
+        game_data[field_name] = found_val
+   
+    # game_data["comments"] = ""
+    # game_data["fans"] = ""
+    # game_data["page_views"] = ""
+    # --- Ranks ---
+    rank_targets = [
+        ("overall_rank", "Overall Rank", ["Board Game Rank", "Overall Rank"]),
+        ("strategy_rank", "Strategy Rank", ["Strategy Rank", "Strategy Game Rank"]),
+        ("party_rank", "Party Rank", ["Party Game Rank", "Party Rank"]),
+        ("family_rank", "Family Rank", ["Family Game Rank", "Family Rank"])
+    ]
+
+    # BGG embeds ranks in rankinfo objects, e.g.:
+    # {"shortprettyname":"Strategy Rank", "rank":"55", ...}
+    rankinfo_match = re.search(r'"rankinfo"\s*:\s*\[(.*?)\]', html_content, re.IGNORECASE | re.DOTALL)
+    rankinfo_entries = []
+    if rankinfo_match:
+        rankinfo_entries = re.findall(r'\{(.*?)\}', rankinfo_match.group(1), re.DOTALL)
+
+    for field_name, dom_title, json_keys in rank_targets:
+        dom_value = ""
+        item_pattern = r'<li\b[^>]*class=["\'][^"\']*\boutline-item\b[^"\']*["\'][^>]*>(.*?)</li>'
+        
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            
+            # Match the title container
+            title_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-title\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if not title_text.startswith(dom_title.casefold()):
+                continue
+
+            # Match the description container
+            description_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-description\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if description_match:
+                desc_html = description_match.group(1)
+                
+                # Extract from the rank anchor tag (which carries class="rank-value")
+                value_match = re.search(r'<a\b[^>]*>(.*?)</a>', desc_html, re.IGNORECASE | re.DOTALL)
+                if value_match:
+                    dom_value = re.sub(r'[^\d]', '', clean_html_text(value_match.group(1)))
+            break
+
+        if dom_value:
+            game_data[field_name] = dom_value
+            continue
+            
+        # Match the rankinfo entry by its display name, not by a synthetic
+        # key such as "strategyrank" (which BGG does not provide).
+        found_val = ""
+        for entry in rankinfo_entries:
+            name_match = re.search(
+                r'"(?:shortprettyname|prettyname)"\s*:\s*"((?:\\.|[^"\\])*)"',
+                entry, re.IGNORECASE
+            )
+            value_match = re.search(r'"rank"\s*:\s*"?(\d+)"?', entry, re.IGNORECASE)
+            if name_match and value_match and name_match.group(1).casefold() in [n.casefold() for n in json_keys]:
+                found_val = value_match.group(1)
+                break
+
+        # Retain compatibility with older cached pages that expose direct keys.
+        if not found_val:
+            legacy_keys = {
+                "overall_rank": ["overallrank", "rank"],
+                "strategy_rank": ["strategyrank"],
+                "party_rank": ["partyrank"],
+                "family_rank": ["familyrank"],
+            }[field_name]
+            for key in legacy_keys:
+                json_match = re.search(rf'"{key}"\s*:\s*"?(\d+)"?', html_content, re.IGNORECASE)
+                if json_match:
+                    found_val = json_match.group(1)
+                    break
+        game_data[field_name] = found_val
+    
+    # game_data["overall_rank"] = ""
+    # game_data["strategy_rank"] = ""
+    # game_data["party_rank"] = ""
+    # game_data["family_rank"] = ""
+    
+    #These play metrics (All Time Plays and This Month) follow the exact same clean outline-item structural pattern you perfected for your main stats loop. Both values are securely wrapped inside standard anchor tags (<a>) within their respective description blocks.   Here is the integration code for both play statistics:Python# --- Play Statistics ---
+    # --- All Time Plays and This Month ---
+    play_targets = [
+        ("all_time_plays", "All Time Plays", ["numplays", "alltimeplays", "plays"]),
+        ("all_time_plays_this_month", "This Month", ["numplays_month", "numplaysthismonth", "playsthismonth", "thismonth"])
+    ]
+
+    for field_name, dom_title, json_keys in play_targets:
+        dom_value = ""
+        item_pattern = r'<li\b[^>]*class=["\'][^"\']*\boutline-item\b[^"\']*["\'][^>]*>(.*?)</li>'
+        
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            
+            # Match the title container
+            title_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-title\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if dom_title.casefold() not in title_text:
+                continue
+
+            # Match the description container
+            description_match = re.search(
+                r'<div\b[^>]*class=["\'][^"\']*\boutline-item-description\b[^"\']*["\'][^>]*>(.*?)</div>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if description_match:
+                desc_html = description_match.group(1)
+                
+                # Extract from the anchor tag containing the play count
+                value_match = re.search(r'<a\b[^>]*>(.*?)</a>', desc_html, re.IGNORECASE | re.DOTALL)
+                if value_match:
+                    dom_value = re.sub(r'[^\d]', '', clean_html_text(value_match.group(1)))
+            break
+
+        if dom_value:
+            game_data[field_name] = dom_value
+            continue
+            
+        # JSON Fallback (Runs if the block is missing or unrendered)
+        found_val = ""
+        for key in json_keys:
+            json_match = re.search(rf'"{key}"\s*:\s*"?(\d+)"?', html_content, re.IGNORECASE)
+            if json_match:
+                found_val = json_match.group(1)
+                break
+        game_data[field_name] = found_val
+    # game_data["all_time_plays"] = ""
+    # game_data["all_time_plays_this_month"] = ""
 
     return game_data
 
@@ -337,7 +637,7 @@ def process_games(input_file: Path, smart_append: bool = False):
         "alternate_names", "designer", "artist", "publisher", "description", 
         "awards_honors", "own", "prev_owned", "wishlist", "for_trade", "want_in_trade", 
         "has_parts", "wants_parts", "avg_rating", "comments", "fans", "page_views", 
-        "overall_rank", "strategy_rank", "all_time_plays", "all_time_plays_this_month",
+        "overall_rank", "strategy_rank", "party_rank", "family_rank", "all_time_plays", "all_time_plays_this_month",
         "html_file_path"
     ]
 
