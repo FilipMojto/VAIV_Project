@@ -2,6 +2,7 @@ import os
 import re
 import time
 import csv
+import json
 from pathlib import Path
 from argparse import ArgumentParser
 from playwright.sync_api import sync_playwright
@@ -355,10 +356,20 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     if not awards or len(awards) <= 2:
         json_block = re.search(r'"boardgamehonor"\s*:\s*\[(.*?)\]', html_content, re.DOTALL)
         if json_block:
-            json_names = re.findall(r'"name"\s*:\s*"([^"]+)"', json_block.group(1))
-            for name in json_names:
-                # Decode unicode characters
-                decoded_name = bytes(name, "utf-8").decode("unicode_escape")
+            # Match JSON strings including escaped quotes and backslashes. The
+            # unicode_escape codec rejects valid names ending in a backslash
+            # and can corrupt non-ASCII text; let the JSON decoder handle them.
+            json_names = re.findall(
+                r'"name"\s*:\s*("(?:\\.|[^"\\])*")', json_block.group(1)
+            )
+            for encoded_name in json_names:
+                try:
+                    decoded_name = json.loads(encoded_name)
+                except json.JSONDecodeError:
+                    # Preserve the extracted text if the embedded page data is
+                    # malformed, rather than aborting the entire game scrape.
+                    decoded_name = encoded_name[1:-1]
+                decoded_name = clean_html_text(decoded_name)
                 if decoded_name not in awards:
                     awards.append(decoded_name)
 
