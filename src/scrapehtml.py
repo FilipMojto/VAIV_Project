@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import time
 import csv
@@ -33,6 +33,11 @@ parser.add_argument(
     action="store_true",
     help="Enable smart appending to resume from the last checkpoint.",
 )
+parser.add_argument(
+    "--backfill_missing",
+    action="store_true",
+    help="During smart append, re-parse cached HTML for existing rows with blank fields.",
+)
 args = parser.parse_args()
 
 
@@ -42,6 +47,14 @@ def clean_html_text(text: str) -> str:
         return ""
     text = re.sub(r"<[^>]+>", "", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def decode_json_string(value: str) -> str:
+    """Decode a JSON string fragment, preserving it if the fragment is malformed."""
+    try:
+        return json.loads(f'"{value}"').strip()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return value.strip()
 
 
 def parse_game_html(app_id: str, html_content: str) -> dict:
@@ -576,6 +589,7 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
                     found_val = json_match.group(1)
                     break
         game_data[field_name] = found_val
+
     
     # game_data["overall_rank"] = ""
     # game_data["strategy_rank"] = ""
@@ -637,10 +651,148 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     # game_data["all_time_plays"] = ""
     # game_data["all_time_plays_this_month"] = ""
 
+    classification_targets = [
+        ("game_type", "Type", ["boardgamesubdomain", "subdomain", "type", "boardgametype"]),
+        ("game_category", "Category", ["boardgamecategory", "category", "boardgamecategories"]),
+        ("game_mechanic", "Mechanism", ["boardgamemechanic", "mechanic", "boardgamemechanics", "mechanics"]),
+        ("game_family", "Family", ["boardgamefamily", "family", "boardgamefamilies"])
+    ]
+
+    for field_name, dom_title, json_keys in classification_targets:
+        dom_values = []
+        
+        # BGG classification fields use 'feature' blocks or 'outline-item' wrappers
+        item_pattern = r'<(?:li|div)\b[^>]*class=["\'][^"\']*\b(?:outline-item|feature)\b[^"\']*["\'][^>]*>(.*?)<\/(?:li|div)>'
+        
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            
+            # Match the title container (.outline-item-title or .feature-title)
+            title_match = re.search(
+                r'<(?:div|h4)\b[^>]*class=["\'][^"\']*\b(?:outline-item-title|feature-title)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|h4)>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if dom_title.casefold() not in title_text:
+                continue
+
+            # Match the description container (.outline-item-description or .feature-description)
+            desc_pattern = r'<(?:div|span)\b[^>]*class=["\'][^"\']*\b(?:outline-item-description|feature-description)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|span)>'
+            description_match = re.search(desc_pattern, item_html, re.IGNORECASE | re.DOTALL)
+            
+            if description_match:
+                desc_html = description_match.group(1)
+                
+                # Extract all anchor tags containing classification labels (e.g., "Creatures: Monsters", "Crowdfunding: Kickstarter")
+                value_matches = re.findall(r'<a\b[^>]*>(.*?)</a>', desc_html, re.IGNORECASE | re.DOTALL)
+                for val_match in value_matches:
+                    clean_val = clean_html_text(val_match)
+                    # Filter out UI control symbols ("...", "…") and duplicates
+                    if clean_val and clean_val not in ["...", "…"] and clean_val not in dom_values:
+                        dom_values.append(clean_val)
+            break
+
+        if dom_values:
+            game_data[field_name] = dom_values
+            continue
+            
+        # JSON Fallback (Targets "name": "Value" key-value pairs)
+        found_vals = []
+        for key in json_keys:
+            json_match = re.search(rf'"{key}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})', html_content, re.IGNORECASE | re.DOTALL)
+            if json_match:
+                raw_json_val = json_match.group(1)
+                
+                # Target ONLY the values associated with the "name" key in BGG's JSON payload
+                extracted_names = re.findall(r'"name"\s*:\s*"([^"]+)"', raw_json_val, re.IGNORECASE)
+                
+                for name in extracted_names:
+                    clean_name = decode_json_string(name)
+                    if clean_name and clean_name not in found_vals:
+                        found_vals.append(clean_name)
+                        
+                if found_vals:
+                    break
+                    
+        game_data[field_name] = found_vals
+
+    relationship_targets = [
+        ("reimplements", "Reimplements", ["reimplements", "boardgamereimplements"]),
+        ("reimplemented_by", "Reimplemented By", ["reimplementedby", "boardgamereimplementedby", "reimplementation"]),
+        ("integrates_with", "Integrates With", ["integrateswith", "boardgameintegration", "integrates"]),
+        ("contains", "Contains", ["contains", "boardgamecompilation", "compilation"]),
+        ("contained_in", "Contained In", ["containedin", "contained_in"])
+    ]
+
+    for field_name, dom_title, json_keys in relationship_targets:
+        dom_values = []
+        
+        # Matches 'feature' or 'outline-item' wrappers
+        item_pattern = r'<(?:li|div)\b[^>]*class=["\'][^"\']*\b(?:outline-item|feature)\b[^"\']*["\'][^>]*>(.*?)<\/(?:li|div)>'
+        
+        for item_match in re.finditer(item_pattern, html_content, re.IGNORECASE | re.DOTALL):
+            item_html = item_match.group(1)
+            
+            # Match title header (.feature-title or .outline-item-title)
+            title_match = re.search(
+                r'<(?:div|h4)\b[^>]*class=["\'][^"\']*\b(?:outline-item-title|feature-title)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|h4)>',
+                item_html, re.IGNORECASE | re.DOTALL
+            )
+            if not title_match:
+                continue
+
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if dom_title.casefold() not in title_text:
+                continue
+
+            # Match description container (.feature-description or .outline-item-description)
+            desc_pattern = r'<(?:div|span)\b[^>]*class=["\'][^"\']*\b(?:outline-item-description|feature-description)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|span)>'
+            description_match = re.search(desc_pattern, item_html, re.IGNORECASE | re.DOTALL)
+            
+            if description_match:
+                desc_html = description_match.group(1)
+                
+                # Extract anchor tags containing related game titles
+                value_matches = re.findall(r'<a\b[^>]*>(.*?)</a>', desc_html, re.IGNORECASE | re.DOTALL)
+                for val_match in value_matches:
+                    clean_val = clean_html_text(val_match)
+                    # Filter out UI controls like "..." / "…" and prevent duplicates
+                    if clean_val and clean_val not in ["...", "…"] and clean_val not in dom_values:
+                        dom_values.append(clean_val)
+            break
+
+        if dom_values:
+            game_data[field_name] = dom_values
+            continue
+            
+        # Corrected JSON Fallback for Relational Fields
+        found_vals = []
+        for key in json_keys:
+            json_match = re.search(rf'"{key}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})', html_content, re.IGNORECASE | re.DOTALL)
+            if json_match:
+                raw_json_val = json_match.group(1)
+                
+                # Extract values under "name" or "text" keys inside the embedded JSON object
+                extracted_names = re.findall(r'"(?:name|text)"\s*:\s*"([^"]+)"', raw_json_val, re.IGNORECASE)
+                
+                for name in extracted_names:
+                    clean_name = decode_json_string(name)
+                    if clean_name and clean_name not in found_vals:
+                        found_vals.append(clean_name)
+                        
+                if found_vals:
+                    break
+                    
+        game_data[field_name] = found_vals
+
+    
     return game_data
 
 
-def process_games(input_file: Path, smart_append: bool = False):
+def process_games(input_file: Path, smart_append: bool = False, backfill_missing: bool = False):
     # Kompletná schéma datasetu zadefinovaná podľa zadania
     headers = [
         "app_id", "game_title", "release_year", "short_description", "num_of_ratings",
@@ -649,7 +801,11 @@ def process_games(input_file: Path, smart_append: bool = False):
         "awards_honors", "own", "prev_owned", "wishlist", "for_trade", "want_in_trade", 
         "has_parts", "wants_parts", "avg_rating", "comments", "fans", "page_views", 
         "overall_rank", "strategy_rank", "party_rank", "family_rank", "all_time_plays", "all_time_plays_this_month",
-        "html_file_path"
+        "html_file_path",
+        # --- classification fields ---
+        "game_type", "game_category", "game_mechanic", "game_family",
+        # --- relationship fields ---
+        "reimplements", "reimplemented_by", "integrates_with", "contains", "contained_in"
     ]
 
     harvest_versioner = SmartVersioner(base_filename=input_file.stem, data_dir=input_file.parent)
@@ -672,7 +828,50 @@ def process_games(input_file: Path, smart_append: bool = False):
             scraped_ids = {}
             if smart_append:
                 tqdm.write("Smart appending enabled. Checking for existing scraped data...")
-                scraper_versioner.append_existing_tsv_rows(writer, scraped_ids, id_column="app_id")
+                if backfill_missing:
+                    tqdm.write("Backfilling missing fields from cached HTML...")
+                    latest_file = scraper_versioner.open_latest_save_file()
+                    if latest_file:
+                        with latest_file as tsv_file:
+                            reader = csv.DictReader(tsv_file, delimiter="\t")
+                            backfilled_count = 0
+                            total_rows = sum(1 for _ in reader)
+                            tsv_file.seek(0)  # Reset file pointer to the beginning
+                            # Recreate DictReader so it consumes the header again instead
+                            # of treating that header as the first data row.
+                            reader = csv.DictReader(tsv_file, delimiter="\t")
+                            for row in tqdm(reader, desc="Backfilling Missing Fields", unit="row", total=total_rows):
+                                app_id = (row.get("app_id") or "").strip()
+                                if not app_id or app_id in scraped_ids:
+                                    continue
+
+                                # A blank cell (including a field absent from an older TSV
+                                # schema) indicates that this row may predate the field.
+                                missing_fields = [
+                                    field for field in headers
+                                    if field not in {"app_id", "html_file_path"}
+                                    and not (row.get(field) or "").strip()
+                                ]
+                                if missing_fields:
+                                    tqdm.write(f"Backfilling missing fields for app_id {app_id}: {missing_fields}")
+                                    stored_path = (row.get("html_file_path") or "").strip()
+                                    html_path = Path(stored_path) if stored_path else OUTPUT_DIR / f"{app_id}.html"
+                                    try:
+                                        html_content = html_path.read_text(encoding="utf-8")
+                                    except (OSError, UnicodeError):
+                                        html_content = ""
+                                    if html_content:
+                                        parsed_data = parse_game_html(app_id, html_content)
+                                        for field in missing_fields:
+                                            value = parsed_data.get(field)
+                                            if value is not None and value != "":
+                                                row[field] = value
+                                        backfilled_count += 1
+                                writer.writerow(row)
+                                scraped_ids[app_id] = None
+                        tqdm.write(f"Checked cached HTML for {backfilled_count} existing games with blank fields.")
+                else:
+                    scraper_versioner.append_existing_tsv_rows(writer, scraped_ids, id_column="app_id")
 
             pending_app_ids = [app_id for app_id in app_ids if app_id not in scraped_ids]
             already_scraped_count = len(app_ids) - len(pending_app_ids)
@@ -760,4 +959,4 @@ def process_games(input_file: Path, smart_append: bool = False):
 
 
 if __name__ == "__main__":
-    process_games(args.input, smart_append=args.smart_append)
+    process_games(args.input, smart_append=args.smart_append, backfill_missing=args.backfill_missing)

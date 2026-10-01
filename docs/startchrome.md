@@ -17,4 +17,4 @@ We open it so that we can bypass BoardGameGeek's cloudflare and scrape data.
 
 3. Run the Scraper Script
 
-    - Playwright connects to your running Chrome window, navigates to the game page, grabs the DOM HTML, and saves it directly to your disk.
+    - Playwright connects to your running Chrome window, navigates to the game page, grabs the DOM HTML, and saves it cdirectly to your disk.
