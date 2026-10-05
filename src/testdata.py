@@ -24,7 +24,7 @@ LOG_BASENAME = "testdata"
 # Keep in sync with the TSV schema written by scrapehtml.process_games.
 EXPECTED_FIELDS = (
     "app_id", "game_title", "release_year", "short_description", "num_of_ratings",
-    "num_of_comments", "num_of_players", "playing_time", "age", "weight",
+    "num_of_comments", "num_of_players", "playing_time_min", "playing_time_max", "age", "weight",
     "alternate_names", "designer", "artist", "publisher", "description",
     "awards_honors", "own", "prev_owned", "wishlist", "for_trade", "want_in_trade",
     "has_parts", "wants_parts", "avg_rating", "comments", "fans", "page_views",
@@ -35,7 +35,7 @@ EXPECTED_FIELDS = (
 )
 
 NONNEGATIVE_INTEGER_FIELDS = (
-    "app_id", "release_year", "num_of_ratings", "num_of_comments", "own", "prev_owned",
+    "app_id", "release_year", "num_of_ratings", "num_of_comments", "playing_time_min", "playing_time_max", "own", "prev_owned",
     "for_trade", "want_in_trade", "wishlist", "has_parts", "wants_parts", "comments",
     "fans", "page_views", "overall_rank", "strategy_rank", "party_rank", "family_rank",
     "all_time_plays", "all_time_plays_this_month",
@@ -129,13 +129,10 @@ def validate_row(row, row_num, issues):
         elif match.group(2) and int(match.group(1)) > int(match.group(2)):
             _issue(issues, row_num, "num_of_players", "minimum players exceeds maximum")
 
-    playing_time = (row.get("playing_time") or "").strip()
-    if playing_time:
-        match = re.fullmatch(r"(\d+)(?:[–-](\d+))?\s+Min", playing_time)
-        if not match:
-            _issue(issues, row_num, "playing_time", f"expected N Min or N–M Min, got {playing_time!r}")
-        elif match.group(2) and int(match.group(1)) > int(match.group(2)):
-            _issue(issues, row_num, "playing_time", "minimum time exceeds maximum")
+    min_time = (row.get("playing_time_min") or "").strip()
+    max_time = (row.get("playing_time_max") or "").strip()
+    if min_time.isdigit() and max_time.isdigit() and int(min_time) > int(max_time):
+        _issue(issues, row_num, "playing_time_min", "minimum playing time exceeds maximum")
 
     age = (row.get("age") or "").strip()
     if age and not re.fullmatch(r"\d+\+", age):
