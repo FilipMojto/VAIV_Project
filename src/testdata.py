@@ -6,6 +6,7 @@ uses SmartVersioner to select the latest timestamped scraper export.
 
 import argparse
 import csv
+from itertools import chain
 import logging
 import re
 from datetime import datetime
@@ -166,10 +167,21 @@ def validate_file(path: Path):
     seen_ids = set()
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as tsv_file:
-            reader = csv.DictReader(tsv_file, delimiter="\t")
-            headers = reader.fieldnames or []
-            if not headers:
+            reader = csv.reader(tsv_file, delimiter="\t", strict=True)
+            first_record = next(reader, [])
+            if not first_record:
                 return ["file has no TSV header"], 0
+
+            # A headerless export otherwise causes DictReader-style behavior:
+            # the first game's values become dictionary keys and every later
+            # game's values are paired against them. Detect this using the
+            # schema's app_id column and validate records against our known
+            # schema while reporting the absent header.
+            has_header = "app_id" in first_record
+            headers = first_record if has_header else list(EXPECTED_FIELDS)
+            if not has_header:
+                _issue(issues, 1, "<header>", "header row is missing; using expected schema to validate records")
+
             if len(headers) != len(set(headers)):
                 issues.append("header contains duplicate column names")
             missing = [field for field in EXPECTED_FIELDS if field not in headers]
@@ -179,17 +191,29 @@ def validate_file(path: Path):
             if unexpected:
                 issues.append(f"header has unexpected fields: {', '.join(unexpected)}")
 
-            row_count = 1  # header occupies the first line, even for an empty data file
-            for row_count, row in enumerate(reader, start=2):
-                if None in row:
-                    _issue(issues, row_count, "<row>", "more cells than header columns")
+            row_count = 0 if not has_header else 1
+            records = reader if has_header else chain((first_record,), reader)
+            for row_count, values in enumerate(records, start=2 if has_header else 1):
+                # DictReader silently folds surplus cells into a `None` key and
+                # fills missing cells with None. Construct rows only after
+                # checking the exact width so malformed TSV records cannot
+                # shift values into neighboring columns.
+                if len(values) != len(headers):
+                    _issue(
+                        issues,
+                        row_count,
+                        "<row>",
+                        f"expected {len(headers)} tab-separated fields, found {len(values)}",
+                    )
+                    continue
+                row = dict(zip(headers, values))
                 app_id = (row.get("app_id") or "").strip()
                 if app_id:
                     if app_id in seen_ids:
                         _issue(issues, row_count, "app_id", f"duplicate ID {app_id!r}")
                     seen_ids.add(app_id)
                 validate_row(row, row_count, issues)
-            data_rows = max(0, row_count - 1)
+            data_rows = max(0, row_count - (1 if has_header else 0))
     except (OSError, UnicodeError, csv.Error) as exc:
         return [f"could not read {path}: {exc}"], 0
     return issues, data_rows

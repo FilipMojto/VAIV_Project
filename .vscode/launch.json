@@ -5,13 +5,25 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python Debugger: Module",
+      "name": "Python Debugger: scrapehtml",
       "type": "debugpy",
       "request": "launch",
       "module": "src.scrapehtml",
         "console": "integratedTerminal",
         "args": [
             "--smart_append",
+            // "--backfill_missing",
+            "--enforce_types",
+        ]
+    },
+    {
+      "name": "Python Debugger: testdata",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "src.testdata",
+        "console": "integratedTerminal",
+        "args": [
+            
         ]
     },
     {

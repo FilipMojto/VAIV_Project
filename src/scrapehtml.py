@@ -38,6 +38,11 @@ parser.add_argument(
     action="store_true",
     help="During smart append, re-parse cached HTML for existing rows with blank fields.",
 )
+parser.add_argument(
+    "--enforce_types",
+    action="store_true",
+    help="Enforce data types for parsed fields."
+)
 args = parser.parse_args()
 
 
@@ -47,6 +52,18 @@ def clean_html_text(text: str) -> str:
         return ""
     text = re.sub(r"<[^>]+>", "", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def parse_count(text: str) -> str:
+    """Return a count as digits only, preserving missing/invalid values as blank."""
+    digits = re.sub(r"\D", "", text or "")
+    return str(int(digits)) if digits else ""
+
+def zero_as_none(value: str) -> str:
+    """Convert a string representing a number to None if it is zero or empty."""
+    if not value or value == "0":
+        return None
+    return value
 
 
 def decode_json_string(value: str) -> str:
@@ -204,14 +221,14 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
         r'<a[^>]*href="[^"]*/ratings\?rated=1"[^>]*>\s*(.*?)\s*</a>',
         html_content
     )
-    game_data["num_of_ratings"] = clean_html_text(ratings_match.group(1)) if ratings_match else ""
+    game_data["num_of_ratings"] = parse_count(clean_html_text(ratings_match.group(1))) if ratings_match else ""
 
     # Extract Number of Comments
     comments_match = re.search(
         r'<a[^>]*href="[^"]*/ratings\?comment=1"[^>]*>\s*(.*?)\s*</a>',
         html_content
     )
-    game_data["num_of_comments"] = clean_html_text(comments_match.group(1)) if comments_match else ""
+    game_data["num_of_comments"] = parse_count(clean_html_text(comments_match.group(1))) if comments_match else ""
     
     # game_data["age"] = ""
     # --- age ---
@@ -435,7 +452,9 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
                     dom_value = re.sub(r'[^\d]', '', clean_html_text(value_match.group(1)))
             break
 
-        if dom_value:
+        # BGG displays "--" for unranked categories but embeds those as rank 0.
+        # Keep unspecified ranks blank so they pass the non-negative rank check.
+        if dom_value and int(dom_value) > 0:
             game_data[field_name] = dom_value
             continue
                 
@@ -446,7 +465,7 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
             if json_match:
                 found_val = json_match.group(1)
                 break
-        game_data[field_name] = found_val
+        game_data[field_name] = found_val if found_val and int(found_val) > 0 else ""
 
     # --- Comments, Fans, and Page Views ---
     stat_targets = [
@@ -791,8 +810,19 @@ def parse_game_html(app_id: str, html_content: str) -> dict:
     
     return game_data
 
+field_formats = {
+    "num_of_ratings": int,
+    "num_of_comments": int
+}
 
-def process_games(input_file: Path, smart_append: bool = False, backfill_missing: bool = False):
+field_transforms = {
+    "overall_rank": lambda x: int(x) if x and int(x) > 0 else None,
+    "strategy_rank": lambda x: int(x) if x and int(x) > 0 else None,
+    "party_rank": lambda x: int(x) if x and int(x) > 0 else None,
+    "family_rank": lambda x: int(x) if x and int(x) > 0 else None,
+}
+
+def process_games(input_file: Path, smart_append: bool = False, backfill_missing: bool = False, enforce_types: bool = False):
     # Kompletná schéma datasetu zadefinovaná podľa zadania
     headers = [
         "app_id", "game_title", "release_year", "short_description", "num_of_ratings",
@@ -810,6 +840,29 @@ def process_games(input_file: Path, smart_append: bool = False, backfill_missing
 
     harvest_versioner = SmartVersioner(base_filename=input_file.stem, data_dir=input_file.parent)
     scraper_versioner = SmartVersioner(base_filename=OUTPUT_TSV.stem, data_dir=OUTPUT_TSV.parent, extension=OUTPUT_TSV.suffix)
+
+    def enforce_existing_row_types(row, app_id):
+        for field, expected_type in field_formats.items():
+            if field not in row:
+                continue
+            value = row[field]
+            normalized = parse_count(value) if field in {"num_of_ratings", "num_of_comments"} else value
+            try:
+                row[field] = expected_type(normalized) if normalized else ""
+            except (ValueError, TypeError):
+                html_path = Path((row.get("html_file_path") or "").strip())
+                try:
+                    html_content = html_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    html_content = ""
+                parsed_value = parse_game_html(app_id, html_content).get(field, "") if html_content else ""
+                normalized = parse_count(parsed_value) if field in {"num_of_ratings", "num_of_comments"} else parsed_value
+                row[field] = expected_type(normalized) if normalized else ""
+        
+        for field in field_transforms:
+            if field in row:
+                row[field] = field_transforms[field](row[field])
+        return row
 
     harvest_file = harvest_versioner.open_latest_save_file()
     if harvest_file:
@@ -865,13 +918,38 @@ def process_games(input_file: Path, smart_append: bool = False, backfill_missing
                                         for field in missing_fields:
                                             value = parsed_data.get(field)
                                             if value is not None and value != "":
+                                                # Before writing, ensure the value is of correct type if a format is specified
+                                                if enforce_types and field in field_formats:
+                                                    normalized = parse_count(value) if field in {"num_of_ratings", "num_of_comments"} else value
+                                                    value = field_formats[field](normalized) if normalized else ""
+                                                elif field in field_formats:
+                                                    try:
+                                                        value = field_formats[field](value)
+                                                    except (ValueError, TypeError):
+                                                        tqdm.write(f"Warning: Could not convert field '{field}' value '{value}' to {field_formats[field].__name__}. Keeping original value.")
+                                                
                                                 row[field] = value
                                         backfilled_count += 1
+                                if enforce_types:
+                                    row = enforce_existing_row_types(row, app_id)
                                 writer.writerow(row)
                                 scraped_ids[app_id] = None
                         tqdm.write(f"Checked cached HTML for {backfilled_count} existing games with blank fields.")
                 else:
-                    scraper_versioner.append_existing_tsv_rows(writer, scraped_ids, id_column="app_id")
+                    latest_file = scraper_versioner.open_latest_save_file()
+                    if latest_file:
+                        with latest_file as tsv_file:
+                            reader = csv.DictReader(tsv_file, delimiter="\t")
+                            for row in tqdm(reader, desc="Copying Existing Rows", unit="row"):
+                                app_id = (row.get("app_id") or "").strip()
+                                if not app_id or app_id in scraped_ids:
+                                    continue
+                                if enforce_types:
+                                    row = enforce_existing_row_types(row, app_id)
+                                writer.writerow(row)
+                                scraped_ids[app_id] = None
+                    if enforce_types:
+                        tqdm.write("Data type enforcement completed.")
 
             pending_app_ids = [app_id for app_id in app_ids if app_id not in scraped_ids]
             already_scraped_count = len(app_ids) - len(pending_app_ids)
@@ -959,4 +1037,4 @@ def process_games(input_file: Path, smart_append: bool = False, backfill_missing
 
 
 if __name__ == "__main__":
-    process_games(args.input, smart_append=args.smart_append, backfill_missing=args.backfill_missing)
+    process_games(args.input, smart_append=args.smart_append, backfill_missing=args.backfill_missing, enforce_types=args.enforce_types)
