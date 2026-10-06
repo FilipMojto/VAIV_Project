@@ -5,7 +5,7 @@ from pathlib import Path
 from src.config import DATA_DIR
 
 
-class SmartVersioner:
+class   SmartVersioner:
 
     def __init__(
         self, base_filename: str, data_dir: Path = DATA_DIR, extension: str = ".txt"

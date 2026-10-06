@@ -1,9 +1,11 @@
+from enum import StrEnum
 import json
 from pathlib import Path
 import re
-from typing import Callable, Dict, Literal, TypedDict
+from typing import Callable, Dict
 
 from src.config import HTML_DIR
+from src.utils import load_html_file
 
 
 # -----------------------------------------------------------------------------
@@ -17,18 +19,6 @@ def clean_html_text(text: str) -> str:
         return ""
     text = re.sub(r"<[^>]+>", "", text)
     return re.sub(r"\s+", " ", text).strip()
-
-
-def load_html_file(app_id: str) -> str:
-    """Loads the HTML content of a game page from the local HTML_DIR."""
-    html_file_path = Path(HTML_DIR) / f"{app_id}.html"
-    if not html_file_path.exists():
-        raise FileNotFoundError(
-            f"HTML file for app_id {app_id} not found at {html_file_path}"
-        )
-
-    with open(html_file_path, "r", encoding="utf-8") as file:
-        return file.read()
 
 
 def parse_count(text: str) -> str:
@@ -144,40 +134,6 @@ def parse_descriptions(html_content: str) -> dict:
 
     return game_data
 
-# def parse_alternate_names(html_content: str) -> dict:
-#     """Extracts alternate names from the HTML content."""
-#     game_data = {}
-#     # Extract all alternate names from the page
-#     alt_names_matches = re.findall(
-#         r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
-#         html_content,
-#         re.DOTALL,
-#     )
-
-#     if alt_names_matches:
-#         # Clean text and filter out empty strings
-#         cleaned_names = [
-#             clean_html_text(name) for name in alt_names_matches if clean_html_text(name)
-#         ]
-
-#         # Remove duplicates while preserving original order
-#         unique_names = list(dict.fromkeys(cleaned_names))
-
-#         # Join with pipe separator so commas inside titles won't disrupt parsing
-#         game_data["alternate_names"] = " | ".join(unique_names)
-#     else:
-#         # Fallback regex for embedded JSON data in the HTML source
-#         json_alt_matches = re.findall(
-#             r'"alternatenames"\s*:\s*\[(.*?)\]', html_content, re.DOTALL
-#         )
-#         if json_alt_matches:
-#             names_in_json = re.findall(r'"name"\s*:\s*"([^"]+)"', json_alt_matches[0])
-#             game_data["alternate_names"] = " | ".join(dict.fromkeys(names_in_json))
-#         else:
-#             game_data["alternate_names"] = ""
-
-#     return game_data
-
 
 def parse_game_metrics(html_content: str) -> dict:
     """Extracts various game metrics like number of players, play time, age, and weight from the HTML content."""
@@ -196,16 +152,6 @@ def parse_game_metrics(html_content: str) -> dict:
     # Formátovanie výstupu (napr. "1–4" alebo "1" ak sa min a max rovnajú)
     game_data['num_of_players_min'] = min_players if min_players else ""
     game_data['num_of_players_max'] = max_players if max_players else ""
-    
-    # if min_players and max_players:
-    #     if min_players == max_players:
-    #         game_data["num_of_players"] = min_players
-    #     else:
-    #         game_data["num_of_players"] = f"{min_players}–{max_players}"
-    # elif min_players or max_players:
-    #     game_data["num_of_players"] = min_players or max_players
-    # else:
-    #     game_data["num_of_players"] = ""
 
     min_time_match = re.search(
         r'<meta[^>]*itemprop="minplaytime"[^>]*content="(\d+)"',
@@ -227,9 +173,12 @@ def parse_game_metrics(html_content: str) -> dict:
     min_time = min_time_match.group(1) if min_time_match else ""
     max_time = max_time_match.group(1) if max_time_match else ""
 
-    game_data["play_time_min"] = min_time
-    game_data["play_time_max"] = max_time
+    if ( min_time == 0 or min_time == "0" ) or (max_time == 0 or max_time == "0"):
+        print("HERE")
 
+    game_data["play_time_min"] = "" if min_time == 0 or min_time == "0" else min_time 
+    game_data["play_time_max"] = "" if max_time == 0 or max_time == "0" else max_time
+ 
     # Extract minimum age
     age_match = re.search(
         r'<span[^>]*itemprop="suggestedMinAge"[^>]*>\s*(\d+)\s*</span>', html_content
@@ -240,13 +189,6 @@ def parse_game_metrics(html_content: str) -> dict:
         age_match = re.search(r'"minage"\s*:\s*"?(\d+)"?', html_content)
 
     game_data["age"] = f"{age_match.group(1)}+" if age_match else ""
-    # # --- alternate_names ---
-    # # Extract all alternate names from the page
-    # alt_names_matches = re.findall(
-    #     r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
-    #     html_content,
-    #     re.DOTALL,
-    # )
 
     # Extrakcia náročnosti / váhy hry (weight)
     weight_match = re.search(
@@ -370,6 +312,8 @@ def parse_game_classification(html_content: str) -> dict:
                     break
 
         game_data[field_name] = found_vals
+
+    return game_data
 
 
 def parse_game_credits(html_content: str) -> dict:
@@ -562,6 +506,14 @@ def parse_game_ranks(html_content: str) -> dict:
                     found_val = json_match.group(1)
                     break
         game_data[field_name] = found_val
+
+    ranks_to_update = []
+    for rank, value in game_data.items():
+        if value == 0 or value == "0":
+            ranks_to_update.append(rank)
+
+    for rank in ranks_to_update:
+        game_data[rank] = ""
 
     return game_data
 
@@ -1064,104 +1016,101 @@ def parse_relationship_fields(html_content: str) -> dict:
     return game_data
 
 
-class ParsingMappings(TypedDict, total=False):
+class ParserGroup(StrEnum):
+    GENERAL_FIELDS = "general_fields"
+    DESCRIPTIONS = "descriptions"
+    GAME_METRICS = "game_metrics"
+    GAME_CLASSIFICATION = "game_classification"
+    GAME_CREDITS = "game_credits"
+    RATING_AND_AWARDS = "rating_and_awards"
+    GENERAL_STATS = "general_stats"
+    PLAYER_STATS = "player_stats"
+    PLAYER_PLAYS_STATS = "player_plays_stats"
+    GAME_RANKS = "game_ranks"
+    RELATIONSHIP_FIELDS = "relationship_fields"
 
-    # --- general_fields (game_title, release_year, 
-    # alternate_names) ---
-    general_fields: Callable
-
-    # --- description_fields (short_description, description) ---
-    descriptions: Callable
-
-    # --- game_metrics (num_of_players_min, num_of_players_max,
-    # play_time_min, play_time_max, age, weight) ---
-    game_metrics: Callable
-    # num_of_players: Callable
-    # play_time: Callable
-    # age: Callable
-    # weight: Callable
-    
-    # --- game_classification_fields (game_type, game_category,
-    # game_mechanic, game_family) ---
-    
-    game_classification: Callable
-    # game_type: Callable
-    # game_category: Callable
-    # game_mechanic: Callable
-    # game_family: Callable
-
-    # --- game_credits (designer, artist, publisher) ---
-    game_credits: Callable
-    # designer: Callable
-    # artist: Callable
-    # publisher: Callable
-
-    # --- ratings_&_awards ---
-    rating_and_awards: Callable
-    # avg_rating: Callable
-    # awards_honors: Callable
-
-    # # --- general_stats (num_of_ratings, comments, page_views,
-    # fans) ---
-    general_stats: Callable
-    # num_of_ratings: Callable
-    # comments: Callable
-    # page_views: Callable
-    # fans: Callable
-
-    # --- player_stats(own, prev_owned, for_trade, want_in_trade,
-    # wishlist, has_parts, wants_parts) ---
-    player_stats: Callable    
-    # own: Callable
-    # prev_owned: Callable
-    # for_trade: Callable
-    # want_in_trade: Callable
-    # wishlist: Callable
-    # has_parts: Callable
-    # wants_parts: Callable
-
-    # --- player_plays_stats (all_time_plays,
-    # all_time_plays_this_month) ---
-    player_plays_stats: Callable
-
-    # --- game_ranks (overall_rank, strategy_rank, party_rank,
-    # family_rank) ---
-    game_ranks: Callable
-    # overall_rank: Callable
-    # strategy_rank: Callable
-    # party_rank: Callable
-    # family_rank: Callable
-    
-    
-    # --- relationship_fields (reimplements, reimplemented_by,
-    # integrated_with, contains, contained_in) ---
-    relationship_fields: Callable
-    # reimplements: Callable
-    # reimplemented_by: Callable
-    # integrates_with: Callable
-    # contains: Callable
-    # contained_in: Callable
-
-# Intellisense will now prompt all available keys as soon as you open quotes {"
-parsing_mappings: ParsingMappings = {
-    "general_fields": parse_general_fields,
-    "descriptions": parse_descriptions,
-    "game_metrics": parse_game_metrics,
-    "game_classification": parse_game_classification,
-    "game_credits": parse_game_credits,
-    "game_ranks": parse_game_ranks,
-    "player_stats": parse_player_stats,
-    "player_plays_stats": parse_player_plays_stats,
-    "rating_and_awards": parse_ratings_and_awards,
-
-    # IDE suggests matching keys here!
+GROUP_FIELD_MAPPINGS: Dict[ParserGroup, list[str]] = {
+    ParserGroup.GENERAL_FIELDS: [
+        "game_title",
+        "release_year",
+        "alternate_names",
+    ],
+    ParserGroup.DESCRIPTIONS: [
+        "short_description",
+        "description",
+    ],
+    ParserGroup.GAME_METRICS: [
+        "num_of_players_min",
+        "num_of_players_max",
+        "play_time_min",
+        "play_time_max",
+        "age",
+        "weight",
+    ],
+    ParserGroup.GAME_CLASSIFICATION: [
+        "game_type",
+        "game_category",
+        "game_mechanic",
+        "game_family",
+    ],
+    ParserGroup.GAME_CREDITS: [
+        "designer",
+        "artist",
+        "publisher",
+    ],
+    ParserGroup.RATING_AND_AWARDS: [
+        "avg_rating",
+        "awards_honors",
+    ],
+    ParserGroup.GENERAL_STATS: [
+        "num_of_ratings",
+        "comments",
+        "page_views",
+        "fans",
+    ],
+    ParserGroup.PLAYER_STATS: [
+        "own",
+        "prev_owned",
+        "for_trade",
+        "want_in_trade",
+        "wishlist",
+        "has_parts",
+        "wants_parts",
+    ],
+    ParserGroup.PLAYER_PLAYS_STATS: [
+        "all_time_plays",
+        "all_time_plays_this_month",
+    ],
+    ParserGroup.GAME_RANKS: [
+        "overall_rank",
+        "strategy_rank",
+        "party_rank",
+        "family_rank",
+    ],
+    ParserGroup.RELATIONSHIP_FIELDS: [
+        "reimplements",
+        "reimplemented_by",
+        "integrates_with",
+        "contains",
+        "contained_in",
+    ],
 }
 
+# 1. Mapping dictionary built with symbols (F2 safe)
+parsing_mappings: Dict[ParserGroup, Callable] = {
+    ParserGroup.GENERAL_FIELDS: parse_general_fields,
+    ParserGroup.DESCRIPTIONS: parse_descriptions,
+    ParserGroup.GAME_METRICS: parse_game_metrics,
+    ParserGroup.GAME_CLASSIFICATION: parse_game_classification,
+    ParserGroup.GAME_CREDITS: parse_game_credits,
+    ParserGroup.RATING_AND_AWARDS: parse_ratings_and_awards,
+    ParserGroup.GENERAL_STATS: parse_general_stats,
+    ParserGroup.PLAYER_STATS: parse_player_stats,
+    ParserGroup.PLAYER_PLAYS_STATS: parse_player_plays_stats,
+    ParserGroup.GAME_RANKS: parse_game_ranks,
+    ParserGroup.RELATIONSHIP_FIELDS: parse_relationship_fields,
+}
 
-# parsing_mappings: Dict[FIELD_TYPE, Callable] = {
-#     ''    
-# }
-# I need a quick test to load existing tsv file and check if the parsing works correctly. I will create a test function that reads a sample TSV file, extracts the HTML content, and then calls the `parse_play_fields` function to verify the output.
 
 if __name__ == "__main__":
     # Sample test for parse_play_fields function
@@ -1169,6 +1118,3 @@ if __name__ == "__main__":
     # now load .html file using the app_id
     sample_html_path = Path(HTML_DIR) / f"{app_id}.html"
     loaded_html = load_html_file(app_id)
-
-    # result = parse_play_fields(HTML_DIR / f"{app_id}.html")
-    # print(result)  # Expected output: {'all_time_plays': '70925', 'all_time_plays_this_month': '1234'}

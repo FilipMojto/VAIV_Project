@@ -13,7 +13,7 @@
         "args": [
             "--smart_append",
             // "--backfill_missing",
-            "--enforce_types",
+            "--reparse_fields",
         ]
     },
     {
