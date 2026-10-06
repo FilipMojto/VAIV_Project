@@ -12,7 +12,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from src.config import DATA_DIR
+
+from src.config import DATA_DIR, BGG_GAMES_DIR
 from src.versioning import SmartVersioner
 
 
@@ -227,10 +228,10 @@ def main(argv=None):
         if args.file:
             data_file = args.file
         else:
-            versioner = SmartVersioner(BASE_FILENAME, data_dir=DATA_DIR, extension=EXTENSION)
+            versioner = SmartVersioner(BASE_FILENAME, data_dir=BGG_GAMES_DIR, extension=EXTENSION)
             latest = versioner.open_latest_save_file()
             if latest is None:
-                logger.error("No versioned %s TSV found in %s", BASE_FILENAME, DATA_DIR)
+                logger.error("No versioned %s TSV found in %s", BASE_FILENAME, BGG_GAMES_DIR)
                 return 2
             data_file = Path(latest.name)
             latest.close()
