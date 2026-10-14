@@ -40,7 +40,7 @@ class   SmartVersioner:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return self.data_dir / f"{self.base_filename}_{timestamp}{self.extension}"
 
-    def write_to_temp(self, newline: str = "\n"):
+    def open_temp(self, newline: str = "\n"):
         """Opens the temporary file for writing."""
         self._temp_file.parent.mkdir(parents=True, exist_ok=True)
         return open(self._temp_file, "w", newline=newline, encoding="utf-8")

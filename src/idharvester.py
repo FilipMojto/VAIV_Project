@@ -131,7 +131,7 @@ def harvest_game_ids(output_file: Path, target_count=TARGET_GAME_COUNT, start_pa
                         pbar.update(new_added)
 
                         # Checkpoint write to temporary file
-                        with versioner.write_to_temp() as temp_file:
+                        with versioner.open_temp() as temp_file:
                             for game_id in collected_ids.keys():
                                 temp_file.write(f"{game_id}\n")
 
