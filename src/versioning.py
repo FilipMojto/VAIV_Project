@@ -5,7 +5,7 @@ from pathlib import Path
 from src.config import DATA_DIR
 
 
-class   SmartVersioner:
+class SmartVersioner:
 
     def __init__(
         self, base_filename: str, data_dir: Path = DATA_DIR, extension: str = ".txt"
@@ -43,10 +43,17 @@ class   SmartVersioner:
     def open_temp(self, newline: str = "\n"):
         """Opens the temporary file for writing."""
         self._temp_file.parent.mkdir(parents=True, exist_ok=True)
-        return open(self._temp_file, "w", newline=newline, encoding="utf-8")
+        self._temp_file_handle = open(self._temp_file, "w", newline=newline, encoding="utf-8")
+        return self._temp_file_handle
 
     def dump_temp_to_final(self):
         """Renames the temporary file to a final timestamped file."""
+        if hasattr(self, "_temp_file_handle") and self._temp_file_handle:
+            try:
+                self._temp_file_handle.close()
+            except Exception:
+                pass
+            
         if self._temp_file.exists():
             final_file = self.get_next_save_file()
             self._temp_file.rename(final_file)

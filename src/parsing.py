@@ -936,83 +936,91 @@ def parse_relationship_fields(html_content: str) -> dict:
     ]
 
     for field_name, dom_title, json_keys in relationship_targets:
-        dom_values = []
+      dom_values = []
 
-        # Matches 'feature' or 'outline-item' wrappers
-        item_pattern = r'<(?:li|div)\b[^>]*class=["\'][^"\']*\b(?:outline-item|feature)\b[^"\']*["\'][^>]*>(.*?)<\/(?:li|div)>'
+      # Matches 'feature' or 'outline-item' wrappers
+      item_pattern = r'<(?:li|div)\b[^>]*class=["\'][^"\']*\b(?:outline-item|feature)\b[^"\']*["\'][^>]*>(.*?)<\/(?:li|div)>'
 
-        for item_match in re.finditer(
-            item_pattern, html_content, re.IGNORECASE | re.DOTALL
+      for item_match in re.finditer(
+          item_pattern, html_content, re.IGNORECASE | re.DOTALL
+      ):
+        item_html = item_match.group(1)
+
+        # Match title header (.feature-title or .outline-item-title)
+        title_match = re.search(
+            r'<(?:div|h4)\b[^>]*class=["\'][^"\']*\b(?:outline-item-title|feature-title)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|h4)>',
+            item_html,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if not title_match:
+          continue
+
+        # --- TOTO TU CHÝBALO: Overenie, či sme v správnej sekcii (napr. "Reimplements") ---
+        title_text = clean_html_text(title_match.group(1)).casefold()
+        if dom_title.casefold() not in title_text:
+          continue
+
+        anchor_pattern = (
+            r'<a\b[^>]*href=["\'](/boardgame/(\d+)/[^"\']*)["\'][^>]*>(.*?)</a>'
+        )
+
+        for anchor_match in re.finditer(
+            anchor_pattern, item_html, re.IGNORECASE | re.DOTALL
         ):
-            item_html = item_match.group(1)
+          full_href = anchor_match.group(1)
+          app_id = anchor_match.group(2)  # app_id hry pre queue
+          raw_text = anchor_match.group(3)
 
-            # Match title header (.feature-title or .outline-item-title)
-            title_match = re.search(
-                r'<(?:div|h4)\b[^>]*class=["\'][^"\']*\b(?:outline-item-title|feature-title)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|h4)>',
-                item_html,
-                re.IGNORECASE | re.DOTALL,
-            )
-            if not title_match:
-                continue
+          clean_val = clean_html_text(raw_text)
 
-            title_text = clean_html_text(title_match.group(1)).casefold()
-            if dom_title.casefold() not in title_text:
-                continue
+          if clean_val and clean_val not in ["...", "…"]:
+            link_info = {"app_id": app_id, "name": clean_val, "url": full_href}
 
-            # Match description container (.feature-description or .outline-item-description)
-            desc_pattern = r'<(?:div|span)\b[^>]*class=["\'][^"\']*\b(?:outline-item-description|feature-description)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|span)>'
-            description_match = re.search(
-                desc_pattern, item_html, re.IGNORECASE | re.DOTALL
-            )
+            if link_info not in dom_values:
+              dom_values.append(link_info)
 
-            if description_match:
-                desc_html = description_match.group(1)
+        # Ak sme našli položky pre túto sekciu, ukončíme hľadanie itemov
+        if dom_values:
+          break
 
-                # Extract anchor tags containing related game titles
-                value_matches = re.findall(
-                    r"<a\b[^>]*>(.*?)</a>", desc_html, re.IGNORECASE | re.DOTALL
-                )
-                for val_match in value_matches:
-                    clean_val = clean_html_text(val_match)
-                    # Filter out UI controls like "..." / "…" and prevent duplicates
-                    if (
-                        clean_val
-                        and clean_val not in ["...", "…"]
-                        and clean_val not in dom_values
-                    ):
-                        dom_values.append(clean_val)
+      if dom_values:
+        game_data[field_name] = dom_values
+        continue
+
+      # --- JSON Fallback (zostáva nezmenený pod týmto) ---
+      found_vals = []
+      for key in json_keys:
+        json_match = re.search(
+            rf'"{key}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})',
+            html_content,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if json_match:
+          raw_json_val = json_match.group(1)
+          extracted_names = re.findall(
+              r'"(?:name|text)"\s*:\s*"([^"]+)"', raw_json_val, re.IGNORECASE
+          )
+          for name in extracted_names:
+            clean_name = decode_json_string(name)
+            if clean_name and clean_name not in found_vals:
+              found_vals.append(clean_name)
+          if found_vals:
             break
 
-        if dom_values:
-            game_data[field_name] = dom_values
-            continue
+      game_data[field_name] = found_vals
 
-        # Corrected JSON Fallback for Relational Fields
-        found_vals = []
-        for key in json_keys:
-            json_match = re.search(
-                rf'"{key}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})',
-                html_content,
-                re.IGNORECASE | re.DOTALL,
-            )
-            if json_match:
-                raw_json_val = json_match.group(1)
-
-                # Extract values under "name" or "text" keys inside the embedded JSON object
-                extracted_names = re.findall(
-                    r'"(?:name|text)"\s*:\s*"([^"]+)"', raw_json_val, re.IGNORECASE
-                )
-
-                for name in extracted_names:
-                    clean_name = decode_json_string(name)
-                    if clean_name and clean_name not in found_vals:
-                        found_vals.append(clean_name)
-
-                if found_vals:
-                    break
-
-        game_data[field_name] = found_vals
+    # return game_data
     
+    return game_data
+
+
+def parse_html_metadata(page_id: int, html_content: str):
+    game_data = {}
+    game_data["app_id"] = page_id
+
+    for _, parser in parsing_mappings.items():
+        game_data.update(parser(html_content))
+
     return game_data
 
 

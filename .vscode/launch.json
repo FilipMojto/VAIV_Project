@@ -17,6 +17,17 @@
         ]
     },
     {
+      "name": "Python Debugger: crawler",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "src.crawler",
+        "console": "integratedTerminal",
+        "args": [
+            "--target",
+            "500"
+        ]
+    },
+    {
       "name": "Python Debugger: testdata",
       "type": "debugpy",
       "request": "launch",
