@@ -17,8 +17,9 @@ HARVEST_TEMP_FILE = HARVEST_DIR / f"{HARVEST_FILE_NAME.stem}_temp.txt"
 CDP_URL = "http://localhost:9222"
 BGG_GAMES_DIR = DATA_DIR / "bgg_games"
 
+OUTPUT_FILE = "bgg_games.tsv"
 OUTPUT_DIR = DATA_DIR / "bgg_raw_htmls"
-OUTPUT_TSV = BGG_GAMES_DIR / "bgg_games.tsv"
+OUTPUT_TSV = BGG_GAMES_DIR / OUTPUT_FILE
 
 os.makedirs(BGG_GAMES_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)

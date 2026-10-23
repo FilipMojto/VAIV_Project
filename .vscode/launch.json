@@ -24,7 +24,7 @@
         "console": "integratedTerminal",
         "args": [
             "--target",
-            "500"
+            "15000"
         ]
     },
     {
