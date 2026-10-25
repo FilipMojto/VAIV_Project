@@ -39,56 +39,93 @@ def decode_json_string(value: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-def parse_general_fields(html_content: str) -> dict:
-    """Extracts the game title, release year and alternate names
-      from the HTML content."""
+def parse_general_fields(
+    html_content: str, return_snippets: bool = False
+) -> dict | tuple[dict, dict]:
+  """Extrahuje game title, release year a alternate names z HTML.
 
-    game_data = {}
-    # ZÁKLADNÉ METADÁTA (Príklady Regexov pre BGG)
-    # Názov a rok sa často nachádzajú v title alebo v hlavičke
-    title_match = re.search(
-        r'<meta property="og:title" content="(.*?)(?:\s\(\d{4}\))?"', html_content
+  Ak je return_snippets=True, vracia tuple (game_data, html_snippets).
+  Inak vracia iba game_data (dict) pre bežný beh crawlera.
+  """
+  game_data = {}
+  html_snippets = {} if return_snippets else None
+
+  # 1. Názov hry
+  title_match = re.search(
+      r'<meta property="og:title" content="(.*?)(?:\s\(\d{4}\))?"', html_content
+  )
+  if title_match:
+    game_data["game_title"] = clean_html_text(title_match.group(1))
+    if return_snippets:
+      # Pokúsime sa nájsť celý meta tag pre peknú ukážku
+      full_title_tag = re.search(
+          r'<meta property="og:title" content="[^"]+">', html_content
+      )
+      html_snippets["game_title"] = (
+          full_title_tag.group(0) if full_title_tag else title_match.group(0)
+      )
+  else:
+    game_data["game_title"] = ""
+    if return_snippets:
+      html_snippets["game_title"] = "Nenašiel sa match"
+
+  # 2. Rok vydania
+  year_match = re.search(
+      r'<span[^>]*class="game-year"[^>]*>\s*\(\s*(\d+)\s*\)\s*</span>',
+      html_content,
+  )
+  if year_match:
+    game_data["release_year"] = year_match.group(1)
+    if return_snippets:
+      html_snippets["release_year"] = year_match.group(0)
+  else:
+    game_data["release_year"] = ""
+    if return_snippets:
+      html_snippets["release_year"] = "Nenašiel sa match"
+
+  # 3. Alternatívne názvy
+  alt_names_matches = re.findall(
+      r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
+      html_content,
+      re.DOTALL,
+  )
+
+  if alt_names_matches:
+    cleaned_names = [
+        clean_html_text(name) for name in alt_names_matches if clean_html_text(name)
+    ]
+    unique_names = list(dict.fromkeys(cleaned_names))
+    game_data["alternate_names"] = " | ".join(unique_names)
+    if return_snippets:
+      # Ukážka prvého nájdeného divu
+      first_div_match = re.search(
+          r'<div[^>]*ng-switch-when="alternatename"[^>]*>.*?</div>',
+          html_content,
+          re.DOTALL,
+      )
+      html_snippets["alternate_names"] = (
+          first_div_match.group(0) if first_div_match else alt_names_matches[0]
+      )
+  else:
+    json_alt_matches = re.findall(
+        r'"alternatenames"\s*:\s*\[(.*?)\]', html_content, re.DOTALL
     )
-    game_data["game_title"] = (
-        clean_html_text(title_match.group(1)) if title_match else ""
-    )
-
-    year_match = re.search(
-        r'<span[^>]*class="game-year"[^>]*>\s*\(\s*(\d+)\s*\)\s*</span>', html_content
-    )
-    game_data["release_year"] = year_match.group(1) if year_match else ""
-    
-    # --- alternate_names ---
-    
-    alt_names_matches = re.findall(
-        r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
-        html_content,
-        re.DOTALL,
-    )
-
-    if alt_names_matches:
-        # Clean text and filter out empty strings
-        cleaned_names = [
-            clean_html_text(name) for name in alt_names_matches if clean_html_text(name)
-        ]
-
-        # Remove duplicates while preserving original order
-        unique_names = list(dict.fromkeys(cleaned_names))
-
-        # Join with pipe separator so commas inside titles won't disrupt parsing
-        game_data["alternate_names"] = " | ".join(unique_names)
+    if json_alt_matches:
+      names_in_json = re.findall(r'"name"\s*:\s*"([^"]+)"', json_alt_matches[0])
+      game_data["alternate_names"] = " | ".join(dict.fromkeys(names_in_json))
+      if return_snippets:
+        html_snippets["alternate_names"] = json_alt_matches[0][
+            :300
+        ]  # skrátený JSON fragment
     else:
-        # Fallback regex for embedded JSON data in the HTML source
-        json_alt_matches = re.findall(
-            r'"alternatenames"\s*:\s*\[(.*?)\]', html_content, re.DOTALL
-        )
-        if json_alt_matches:
-            names_in_json = re.findall(r'"name"\s*:\s*"([^"]+)"', json_alt_matches[0])
-            game_data["alternate_names"] = " | ".join(dict.fromkeys(names_in_json))
-        else:
-            game_data["alternate_names"] = ""
-                
-    return game_data
+      game_data["alternate_names"] = ""
+      if return_snippets:
+        html_snippets["alternate_names"] = "Nenašiel sa match"
+
+  # Návratová hodnota pod závislosťou flagu
+  if return_snippets:
+    return game_data, html_snippets
+  return game_data
 
 def parse_descriptions(html_content: str) -> dict:
     """Extracts short and long descriptions from the HTML content."""

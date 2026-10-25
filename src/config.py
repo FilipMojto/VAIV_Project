@@ -23,3 +23,9 @@ OUTPUT_TSV = BGG_GAMES_DIR / OUTPUT_FILE
 
 os.makedirs(BGG_GAMES_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# -----------------------------------------------------------------------------
+# logging
+# -----------------------------------------------------------------------------
+LOG_DIR = DATA_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)

@@ -49,7 +49,7 @@ if __name__ == "__main__":
     file_versioner = SmartVersioner(
         base_filename="bgg_games", data_dir=BGG_GAMES_DIR, extension=".tsv"
     )
-    file_path = file_versioner.get_latest_file()
+    file_path = file_versioner.get_latest_match()
 
     if file_path is None:
         print("No cache file found.")

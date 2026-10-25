@@ -5,10 +5,100 @@ from pathlib import Path
 from src.config import DATA_DIR
 
 
+class SmartVersionerV2:
+    def __init__(
+        self, base_filename: str, data_dir: Path = DATA_DIR, extension: str = ".txt"
+    ):
+        self.data_dir = data_dir
+        self.base_filename = base_filename
+        self.extension = extension if extension.startswith(".") else f".{extension}"
+        self._temp_file = self.data_dir / f"{self.base_filename}_temp{self.extension}"
+
+    def get_latest_match(self):
+        # glob finds all files matching the pattern, and sorted() puts the newest timestamp last
+        files = [
+            file
+            for file in self.data_dir.glob(f"{self.base_filename}_*{self.extension}")
+            if file != self._temp_file
+        ]
+        if not files:
+            return None
+
+        return sorted(files)[-1]
+
+    def open_latest_save_file(self):
+        """Finds the most recent timestamped file in DATA_DIR."""
+
+        latest_file = self.get_latest_match()
+
+        if latest_file:
+            print(f"--- CHECKPOINT FOUND: {latest_file.name} ---")
+            return open(latest_file, "r", encoding="utf-8")
+
+    def get_next_save_file(self) -> Path:
+        """Generates the next timestamped filename for saving."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.base_filename}_{timestamp}{self.extension}"
+        final_file = self.data_dir / filename
+        suffix = 1
+
+        # to prevent overwriting if multiple scripts are launched at the same time (race condition)
+        # example file: bgg_games_20261015_143022_000001.tsv. ...
+        while final_file.exists():
+            filename = f"{self.base_filename}_{timestamp}_{suffix:06d}{self.extension}"
+            final_file = self.data_dir / filename
+            suffix += 1
+
+        return final_file
+
+
+class TempManager:
+
+    def __init__(self, file_path: Path):
+        if not file_path.exists():
+            raise FileNotFoundError("Provided file doesn't exist!")
+
+        self.file_path = file_path
+
+        self._temp_file = Path(
+            self.file_path.parent / self.file_path.stem
+            + "_temp"
+            + self.file_path.suffix
+        )
+
+    # def open_temp(self, newline: str = "\n"):
+    #     """Opens the temporary file for writing."""
+    #     self._temp_file.parent.mkdir(parents=True, exist_ok=True)
+    #     self._temp_file_handle = open(
+    #         self._temp_file, "w", newline=newline, encoding="utf-8"
+    #     )
+    #     return self._temp_file_handle
+
+    def dump_temp_to_final(self, save_as: Path):
+        """Renames the temporary file to a final timestamped file."""
+        # if hasattr(self, "_temp_file_handle") and self._temp_file_handle:
+        #     try:
+        #         self._temp_file_handle.close()
+        #     except Exception:
+        #         pass
+
+        if self._temp_file.exists():
+            # final_file = self._versioner.get_next_save_file()
+            self._temp_file.rename(save_as)
+            print(f"Temporary file renamed to: {save_as.name}")
+
+    # -----------------------------------------------------------------------------
+    # getters & setters
+    # -----------------------------------------------------------------------------
+
+    def get_temp_file_path(self):
+        return self._temp_file
+
+
 class SmartVersioner:
     """Manages file versioning smartly.
     It finds all files in the provided dictionary that match the following pattern:
-    
+
     - Starts with the provided filename
     - Ends with the provided extension.
     .
@@ -22,8 +112,10 @@ class SmartVersioner:
         self.base_filename = base_filename
         self.extension = extension if extension.startswith(".") else f".{extension}"
         self._temp_file = self.data_dir / f"{self.base_filename}_temp{self.extension}"
+        self._temp_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def get_latest_file(self):
+
+    def get_latest_match(self):
         # glob finds all files matching the pattern, and sorted() puts the newest timestamp last
         files = [
             file
@@ -34,11 +126,11 @@ class SmartVersioner:
             return None
 
         return sorted(files)[-1]
-    
+
     def open_latest_save_file(self):
         """Finds the most recent timestamped file in DATA_DIR."""
-  
-        latest_file = self.get_latest_file()
+
+        latest_file = self.get_latest_match()
 
         if latest_file:
             print(f"--- CHECKPOINT FOUND: {latest_file.name} ---")
@@ -47,25 +139,29 @@ class SmartVersioner:
         return None
         # return sorted(files)[-1]
 
-    def get_next_save_file(self):
+    def get_next_save_file(self) -> Path:
         """Generates the next timestamped filename for saving."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{self.base_filename}_{timestamp}{self.extension}"
         final_file = self.data_dir / filename
         suffix = 1
+
+        # to prevent overwriting if multiple scripts are launched at the same time (race condition)
+        # example file: bgg_games_20261015_143022_000001.tsv. ...
         while final_file.exists():
-            filename = (
-                f"{self.base_filename}_{timestamp}_{suffix:06d}{self.extension}"
-            )
+            filename = f"{self.base_filename}_{timestamp}_{suffix:06d}{self.extension}"
             final_file = self.data_dir / filename
             suffix += 1
+
         return final_file
 
-    def open_temp(self, newline: str = "\n"):
-        """Opens the temporary file for writing."""
-        self._temp_file.parent.mkdir(parents=True, exist_ok=True)
-        self._temp_file_handle = open(self._temp_file, "w", newline=newline, encoding="utf-8")
-        return self._temp_file_handle
+    # def open_temp(self, newline: str = "\n"):
+    #     """Opens the temporary file for writing."""
+    #     # self._temp_file.parent.mkdir(parents=True, exist_ok=True)
+    #     self._temp_file_handle = open(
+    #         self._temp_file, "w", newline=newline, encoding="utf-8"
+    #     )
+    #     return self._temp_file_handle
 
     def dump_temp_to_final(self):
         """Renames the temporary file to a final timestamped file."""
@@ -74,7 +170,7 @@ class SmartVersioner:
                 self._temp_file_handle.close()
             except Exception:
                 pass
-            
+
         if self._temp_file.exists():
             final_file = self.get_next_save_file()
             self._temp_file.rename(final_file)
@@ -83,7 +179,7 @@ class SmartVersioner:
     # -----------------------------------------------------------------------------
     # getters & setters
     # -----------------------------------------------------------------------------
-    
+
     def get_temp_file_path(self):
         return self._temp_file
 

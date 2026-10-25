@@ -9,9 +9,8 @@ import time
 from argparse import ArgumentParser
 from tqdm import tqdm
 
-from src.filecache import FileCache
 from src.properties import safe_interrupt_handler
-from src.crawling import crawl_page_html
+from src.crawling import BrowserConnectionError, PageHTMLFetcher
 from src.config import BGG_GAMES_DIR, DATA_DIR, OUTPUT_FILE, OUTPUT_TSV
 
 # from src.scrapehtml import OUTPUT_TSV, load_page_html
@@ -37,6 +36,29 @@ SEED_GAME_IDS = [
     "266192",  # Wingspan
     "167791",  # Terraforming Mars
 ]
+
+CHECKPOINT_INTERVAL = 10
+
+
+def _upsert_game_row(
+    output_rows: list[dict],
+    row_indices: dict[str, list[int]],
+    game_data: dict,
+    headers: list[str],
+) -> str:
+    app_id = str(game_data["app_id"])
+    row = {field: game_data.get(field, "") for field in headers}
+    indices = row_indices.get(app_id)
+
+    if indices:
+        for index in indices:
+            output_rows[index] = row
+    else:
+        row_indices[app_id] = [len(output_rows)]
+        output_rows.append(row)
+
+    return app_id
+
 
 parser = ArgumentParser(
     description="Crawl and parse BGG game metadata from raw HTML files via Playwright CDP."
@@ -172,29 +194,14 @@ def run_crawler(
         extension=output_file_path.suffix,
     )
 
-    output_temp_file = scraper_versioner.open_temp(newline="")
-    writer = csv.DictWriter(
-        output_temp_file,
-        fieldnames=headers,
-        delimiter="\t",
-        extrasaction="ignore",
-    )
-    writer.writeheader()
-
-    latest_file = scraper_versioner.get_latest_file()
-    saved_game_ids: set[str] = set()
+    output_rows: list[dict] = []
+    row_indices: dict[str, list[int]] = {}
+    latest_file = scraper_versioner.get_latest_match()
 
     if latest_file is not None:
         with latest_file.open("r", encoding="utf-8", newline="") as existing_file:
             first_row = next(csv.reader(existing_file, delimiter="\t"), [])
         latest_file_has_header = "app_id" in first_row
-
-        saved_game_ids = FileCache(
-            file_path=latest_file,
-            identifier_pos=1,
-            delimiter="\t",
-            contains_header=latest_file_has_header,
-        ).row_ids
 
         with latest_file.open("r", encoding="utf-8", newline="") as existing_file:
             existing_rows = csv.DictReader(
@@ -202,9 +209,32 @@ def run_crawler(
                 delimiter="\t",
                 fieldnames=None if latest_file_has_header else headers,
             )
-            writer.writerows(existing_rows)
+            for existing_row in existing_rows:
+                row = {
+                    field: existing_row.get(field) or ""
+                    for field in headers
+                }
+                app_id = row["app_id"].strip()
+                row_indices.setdefault(app_id, []).append(len(output_rows))
+                output_rows.append(row)
 
-    existing_game_ids = set(saved_game_ids)
+    processed_game_ids: set[str] = set()
+
+    def write_temp_snapshot():
+        temp_file = scraper_versioner.get_temp_file_path()
+        writing_file = temp_file.with_name(f"{temp_file.name}.writing")
+        with writing_file.open("w", newline="", encoding="utf-8") as temp_handle:
+            writer = csv.DictWriter(
+                temp_handle,
+                fieldnames=headers,
+                delimiter="\t",
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            writer.writerows(output_rows)
+            temp_handle.flush()
+            os.fsync(temp_handle.fileno())
+        writing_file.replace(temp_file)
 
     if state is not None and state.get("in_flight") is not None:
         interrupted_app_id = state["in_flight"]
@@ -229,27 +259,14 @@ def run_crawler(
 
     def save_progress():
         nonlocal crawled_count
+        write_temp_snapshot()
         scraper_versioner.dump_temp_to_final()
-        in_flight_completed = active_app_id in visited
-
-        if active_app_id is not None and not in_flight_completed:
-            latest_output = scraper_versioner.get_latest_file()
-            if latest_output is not None and active_app_id not in existing_game_ids:
-                with latest_output.open(
-                    "r", encoding="utf-8", newline=""
-                ) as latest_file_handle:
-                    first_row = next(csv.reader(latest_file_handle, delimiter="\t"), [])
-                latest_has_header = "app_id" in first_row
-                saved_ids = FileCache(
-                    file_path=latest_output,
-                    identifier_pos=1,
-                    delimiter="\t",
-                    contains_header=latest_has_header,
-                )
-                if active_app_id in saved_ids.row_ids:
-                    visited.add(active_app_id)
-                    crawled_count = len(visited)
-                    in_flight_completed = True
+        in_flight_completed = active_app_id in visited or (
+            active_app_id in processed_game_ids
+        )
+        if in_flight_completed and active_app_id not in visited:
+            visited.add(active_app_id)
+            crawled_count = len(visited)
 
         save_crawl_state(
             state_path,
@@ -260,87 +277,86 @@ def run_crawler(
         )
         pbar.close()
 
-    with safe_interrupt_handler(on_interrupt=save_progress):
-        while queue and crawled_count < target_games_count:
-            app_id = queue.popleft()
-            if app_id in visited:
-                continue
-            active_app_id = app_id
+    with PageHTMLFetcher(log_func=tqdm.write) as page_fetcher:
+        with safe_interrupt_handler(on_interrupt=save_progress):
+            pending_checkpoint_rows = 0
+            while queue and crawled_count < target_games_count:
+                app_id = queue.popleft()
+                if app_id in visited:
+                    continue
+                active_app_id = app_id
 
-            tqdm.write(
-                f"[{crawled_count+1}/{target_games_count}] Sťahujem a crawlujem hru"
-                f" ID: {app_id}"
-            )
-
-            try:
-                # 1. Získanie HTML cez tvoj CDP scraper (uloží sa aj do lokálnej cache)
-                #   html_content = cdp_scraper.get_html(app_id)
-                #   (Tu dosadíš svoje volanie na sťahovanie HTML)
-                html_content = crawl_page_html(page_id=app_id, log_func=tqdm.write)
-                if not html_content:
-                    raise RuntimeError(f"No HTML content returned for game {app_id}")
-
-                ids = extract_linked_game_ids(
-                    html_content=html_content, current_app_id=app_id
+                tqdm.write(
+                    f"[{crawled_count+1}/{target_games_count}] Sťahujem a crawlujem hru"
+                    f" ID: {app_id}"
                 )
 
-                for id in ids:
-                    if id not in visited and id not in queue:
-                        tqdm.write(f"Found new game id {id}! Appending to queue...")
-                        queue.append(id)
-                    else:
-                        tqdm.write(
-                            f"Game id {id} already visited or in queue! Skipping..."
-                        )
+                try:
+                    html_content = page_fetcher.get_html(page_id=int(app_id))
+                    ids = extract_linked_game_ids(
+                        html_content=html_content, current_app_id=app_id
+                    )
 
-                # SIMULÁCIA pre ukážku: predpokladáme, že html_content máme stiahnutý
-                # html_content = load_from_cache_or_cdp(app_id)
+                    for linked_id in ids:
+                        if linked_id not in visited and linked_id not in queue:
+                            tqdm.write(
+                                f"Found new game id {linked_id}! Appending to queue..."
+                            )
+                            queue.append(linked_id)
+                        else:
+                            tqdm.write(
+                                f"Game id {linked_id} already visited or in queue! "
+                                "Skipping..."
+                            )
 
-                # 2. PARSOVANIE - tu využijeme presne tvoju funkciu!
-                # game_data = parse_game_html(app_id, html_content)
-                # Extrakcia a uloženie
-                if html_content:
                     game_data = parse_html_metadata(
                         page_id=app_id, html_content=html_content
                     )
 
-                    if app_id not in saved_game_ids:
-                        writer.writerow(game_data)
-                        saved_game_ids.add(app_id)
+                    parsed_app_id = _upsert_game_row(
+                        output_rows, row_indices, game_data, headers
+                    )
+                    processed_game_ids.add(parsed_app_id)
+                    pending_checkpoint_rows += 1
+
                     tqdm.write(
-                        f"  -> Parsed: {game_data.get('game_title', 'Unknown')} | Year: {game_data.get('release_year', 'N/A')} | Rating: {game_data.get('avg_rating', 'N/A')}"
+                        f"  -> Parsed: {game_data.get('game_title', 'Unknown')} | "
+                        f"Year: {game_data.get('release_year', 'N/A')} | "
+                        f"Rating: {game_data.get('avg_rating', 'N/A')}"
                     )
 
-                # 3. Uloženie dát do TSV / súboru
-                # save_row_to_tsv(game_data)
+                    visited.add(app_id)
+                    crawled_count += 1
+                    active_app_id = None
+                    pbar.update(1)
 
-                # Označíme ako navštívené
-                visited.add(app_id)
-                crawled_count += 1
-                active_app_id = None
+                    if pending_checkpoint_rows >= CHECKPOINT_INTERVAL:
+                        write_temp_snapshot()
+                        save_crawl_state(
+                            state_path,
+                            queue=queue,
+                            visited=visited,
+                        )
+                        pending_checkpoint_rows = 0
 
-                pbar.update(1)
+                    tqdm.write(f"Current queue size: {len(queue)}")
+                    time.sleep(random.uniform(2.5, 4.0))
 
-                # 4. NOVÁ ČASŤ PRE CRAWLER: Nájdeme nové hry na stránke a pridáme ich do fronty
-                # new_ids = extract_linked_game_ids(html_content)
-                # for nid in new_ids:
-                #     if nid not in visited and nid not in queue:
-                #         queue.append(nid)
+                except BrowserConnectionError as e:
+                    tqdm.write(f"[ERROR] {e}")
+                    queue.appendleft(app_id)
+                    active_app_id = None
+                    break
+                except Exception as e:
+                    tqdm.write(
+                        f"[ERROR] Zlyhalo spracovanie hry {app_id}: {e}"
+                    )
+                    if app_id not in deferred_ids:
+                        deferred_ids.append(app_id)
+                    active_app_id = None
+                    continue
 
-                # 5. Povinný rešpekt k serveru (random sleep)
-                # sleep_time = random.uniform(2.5, 4.0)
-                tqdm.write(f"Current queue size: {len(queue)}")
-                time.sleep(random.uniform(2.5, 4.0))
-
-            except Exception as e:
-                print(f"[ERROR] Zlyhalo spracovanie hry {app_id}: {e}")
-                tqdm.write(f"[ERROR] Zlyhalo spracovanie hry {app_id}: {e}")
-                if app_id not in deferred_ids:
-                    deferred_ids.append(app_id)
-                active_app_id = None
-                continue
-
-    output_temp_file.close()
+    write_temp_snapshot()
     scraper_versioner.dump_temp_to_final()
     for app_id in deferred_ids:
         if app_id not in queue and app_id not in visited:
