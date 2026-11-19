@@ -106,10 +106,10 @@ class SmartVersioner:
     """
 
     def __init__(
-        self, base_filename: str, data_dir: Path = DATA_DIR, extension: str = ".txt"
+        self, stem: str, data_dir: Path = DATA_DIR, extension: str = ".txt"
     ):
         self.data_dir = data_dir
-        self.base_filename = base_filename
+        self.base_filename = stem
         self.extension = extension if extension.startswith(".") else f".{extension}"
         self._temp_file = self.data_dir / f"{self.base_filename}_temp{self.extension}"
         self._temp_file.parent.mkdir(parents=True, exist_ok=True)

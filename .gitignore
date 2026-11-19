@@ -229,3 +229,8 @@ data/**/*.gz
 data/**/*.bz2
 
 src/bgg_browser_profile/
+# Project browser profiles & local build/index artifacts
+bgg_browser_profile/
+src/bgg_browser_profile/
+lucene_index/
+spark_output/

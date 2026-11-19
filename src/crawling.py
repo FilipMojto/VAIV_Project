@@ -9,7 +9,7 @@ from playwright.sync_api import (
 )
 from tqdm import tqdm
 
-from src.config import CDP_URL, OUTPUT_DIR
+from src.config import CDP_URL, BGG_DIR
 from src.utils import load_html_file
 
 
@@ -81,7 +81,7 @@ class PageHTMLFetcher:
         )
 
     def get_html(self, page_id: int) -> str:
-        file_path = Path(OUTPUT_DIR) / f"{page_id}.html"
+        file_path = Path(BGG_DIR) / f"{page_id}.html"
 
         if file_path.exists():
             self.log_func(f"Page {page_id} found in cache. Loading...")

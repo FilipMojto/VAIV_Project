@@ -7,7 +7,6 @@ from typing import Callable, Dict
 from src.config import HTML_DIR
 from src.utils import load_html_file
 
-
 # -----------------------------------------------------------------------------
 # Utility Functions
 # -----------------------------------------------------------------------------
@@ -26,6 +25,7 @@ def parse_count(text: str) -> str:
     digits = re.sub(r"\D", "", text or "")
     return str(int(digits)) if digits else ""
 
+
 def decode_json_string(value: str) -> str:
     """Decode a JSON string fragment, preserving it if the fragment is malformed."""
     try:
@@ -42,90 +42,91 @@ def decode_json_string(value: str) -> str:
 def parse_general_fields(
     html_content: str, return_snippets: bool = False
 ) -> dict | tuple[dict, dict]:
-  """Extrahuje game title, release year a alternate names z HTML.
+    """Extrahuje game title, release year a alternate names z HTML.
 
-  Ak je return_snippets=True, vracia tuple (game_data, html_snippets).
-  Inak vracia iba game_data (dict) pre bežný beh crawlera.
-  """
-  game_data = {}
-  html_snippets = {} if return_snippets else None
+    Ak je return_snippets=True, vracia tuple (game_data, html_snippets).
+    Inak vracia iba game_data (dict) pre bežný beh crawlera.
+    """
+    game_data = {}
+    html_snippets = {} if return_snippets else None
 
-  # 1. Názov hry
-  title_match = re.search(
-      r'<meta property="og:title" content="(.*?)(?:\s\(\d{4}\))?"', html_content
-  )
-  if title_match:
-    game_data["game_title"] = clean_html_text(title_match.group(1))
-    if return_snippets:
-      # Pokúsime sa nájsť celý meta tag pre peknú ukážku
-      full_title_tag = re.search(
-          r'<meta property="og:title" content="[^"]+">', html_content
-      )
-      html_snippets["game_title"] = (
-          full_title_tag.group(0) if full_title_tag else title_match.group(0)
-      )
-  else:
-    game_data["game_title"] = ""
-    if return_snippets:
-      html_snippets["game_title"] = "Nenašiel sa match"
-
-  # 2. Rok vydania
-  year_match = re.search(
-      r'<span[^>]*class="game-year"[^>]*>\s*\(\s*(\d+)\s*\)\s*</span>',
-      html_content,
-  )
-  if year_match:
-    game_data["release_year"] = year_match.group(1)
-    if return_snippets:
-      html_snippets["release_year"] = year_match.group(0)
-  else:
-    game_data["release_year"] = ""
-    if return_snippets:
-      html_snippets["release_year"] = "Nenašiel sa match"
-
-  # 3. Alternatívne názvy
-  alt_names_matches = re.findall(
-      r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
-      html_content,
-      re.DOTALL,
-  )
-
-  if alt_names_matches:
-    cleaned_names = [
-        clean_html_text(name) for name in alt_names_matches if clean_html_text(name)
-    ]
-    unique_names = list(dict.fromkeys(cleaned_names))
-    game_data["alternate_names"] = " | ".join(unique_names)
-    if return_snippets:
-      # Ukážka prvého nájdeného divu
-      first_div_match = re.search(
-          r'<div[^>]*ng-switch-when="alternatename"[^>]*>.*?</div>',
-          html_content,
-          re.DOTALL,
-      )
-      html_snippets["alternate_names"] = (
-          first_div_match.group(0) if first_div_match else alt_names_matches[0]
-      )
-  else:
-    json_alt_matches = re.findall(
-        r'"alternatenames"\s*:\s*\[(.*?)\]', html_content, re.DOTALL
+    # 1. Názov hry
+    title_match = re.search(
+        r'<meta property="og:title" content="(.*?)(?:\s\(\d{4}\))?"', html_content
     )
-    if json_alt_matches:
-      names_in_json = re.findall(r'"name"\s*:\s*"([^"]+)"', json_alt_matches[0])
-      game_data["alternate_names"] = " | ".join(dict.fromkeys(names_in_json))
-      if return_snippets:
-        html_snippets["alternate_names"] = json_alt_matches[0][
-            :300
-        ]  # skrátený JSON fragment
+    if title_match:
+        game_data["game_title"] = clean_html_text(title_match.group(1))
+        if return_snippets:
+            # Pokúsime sa nájsť celý meta tag pre peknú ukážku
+            full_title_tag = re.search(
+                r'<meta property="og:title" content="[^"]+">', html_content
+            )
+            html_snippets["game_title"] = (
+                full_title_tag.group(0) if full_title_tag else title_match.group(0)
+            )
     else:
-      game_data["alternate_names"] = ""
-      if return_snippets:
-        html_snippets["alternate_names"] = "Nenašiel sa match"
+        game_data["game_title"] = ""
+        if return_snippets:
+            html_snippets["game_title"] = "Nenašiel sa match"
 
-  # Návratová hodnota pod závislosťou flagu
-  if return_snippets:
-    return game_data, html_snippets
-  return game_data
+    # 2. Rok vydania
+    year_match = re.search(
+        r'<span[^>]*class="game-year"[^>]*>\s*\(\s*(\d+)\s*\)\s*</span>',
+        html_content,
+    )
+    if year_match:
+        game_data["release_year"] = year_match.group(1)
+        if return_snippets:
+            html_snippets["release_year"] = year_match.group(0)
+    else:
+        game_data["release_year"] = ""
+        if return_snippets:
+            html_snippets["release_year"] = "Nenašiel sa match"
+
+    # 3. Alternatívne názvy
+    alt_names_matches = re.findall(
+        r'<div[^>]*ng-switch-when="alternatename"[^>]*>\s*(.*?)\s*</div>',
+        html_content,
+        re.DOTALL,
+    )
+
+    if alt_names_matches:
+        cleaned_names = [
+            clean_html_text(name) for name in alt_names_matches if clean_html_text(name)
+        ]
+        unique_names = list(dict.fromkeys(cleaned_names))
+        game_data["alternate_names"] = " | ".join(unique_names)
+        if return_snippets:
+            # Ukážka prvého nájdeného divu
+            first_div_match = re.search(
+                r'<div[^>]*ng-switch-when="alternatename"[^>]*>.*?</div>',
+                html_content,
+                re.DOTALL,
+            )
+            html_snippets["alternate_names"] = (
+                first_div_match.group(0) if first_div_match else alt_names_matches[0]
+            )
+    else:
+        json_alt_matches = re.findall(
+            r'"alternatenames"\s*:\s*\[(.*?)\]', html_content, re.DOTALL
+        )
+        if json_alt_matches:
+            names_in_json = re.findall(r'"name"\s*:\s*"([^"]+)"', json_alt_matches[0])
+            game_data["alternate_names"] = " | ".join(dict.fromkeys(names_in_json))
+            if return_snippets:
+                html_snippets["alternate_names"] = json_alt_matches[0][
+                    :300
+                ]  # skrátený JSON fragment
+        else:
+            game_data["alternate_names"] = ""
+            if return_snippets:
+                html_snippets["alternate_names"] = "Nenašiel sa match"
+
+    # Návratová hodnota pod závislosťou flagu
+    if return_snippets:
+        return game_data, html_snippets
+    return game_data
+
 
 def parse_descriptions(html_content: str) -> dict:
     """Extracts short and long descriptions from the HTML content."""
@@ -133,14 +134,14 @@ def parse_descriptions(html_content: str) -> dict:
     game_data = {}
 
     # --- short_description ---
-    
+
     desc_match = re.search(r'<meta name="description" content="(.*?)"', html_content)
     game_data["short_description"] = (
         clean_html_text(desc_match.group(1)) if desc_match else ""
     )
 
     # --- description ---
-    
+
     desc_match = re.search(
         r'<article class="game-description-body"[^>]*>(.*?)</article>',
         html_content,
@@ -187,8 +188,8 @@ def parse_game_metrics(html_content: str) -> dict:
     max_players = max_match.group(1) if max_match else ""
 
     # Formátovanie výstupu (napr. "1–4" alebo "1" ak sa min a max rovnajú)
-    game_data['num_of_players_min'] = min_players if min_players else ""
-    game_data['num_of_players_max'] = max_players if max_players else ""
+    game_data["num_of_players_min"] = min_players if min_players else ""
+    game_data["num_of_players_max"] = max_players if max_players else ""
 
     min_time_match = re.search(
         r'<meta[^>]*itemprop="minplaytime"[^>]*content="(\d+)"',
@@ -210,12 +211,12 @@ def parse_game_metrics(html_content: str) -> dict:
     min_time = min_time_match.group(1) if min_time_match else ""
     max_time = max_time_match.group(1) if max_time_match else ""
 
-    if ( min_time == 0 or min_time == "0" ) or (max_time == 0 or max_time == "0"):
+    if (min_time == 0 or min_time == "0") or (max_time == 0 or max_time == "0"):
         print("HERE")
 
-    game_data["play_time_min"] = "" if min_time == 0 or min_time == "0" else min_time 
+    game_data["play_time_min"] = "" if min_time == 0 or min_time == "0" else min_time
     game_data["play_time_max"] = "" if max_time == 0 or max_time == "0" else max_time
- 
+
     # Extract minimum age
     age_match = re.search(
         r'<span[^>]*itemprop="suggestedMinAge"[^>]*>\s*(\d+)\s*</span>', html_content
@@ -386,7 +387,7 @@ def parse_game_credits(html_content: str) -> dict:
             game_data["designer"] = ", ".join(dict.fromkeys(names))
         else:
             game_data["designer"] = ""
-    
+
     # --- artist ---
     # Extract all artists
     artist_matches = re.findall(
@@ -451,7 +452,7 @@ def parse_game_ranks(html_content: str) -> dict:
         ("strategy_rank", "Strategy Rank", ["Strategy Rank", "Strategy Game Rank"]),
         ("party_rank", "Party Rank", ["Party Game Rank", "Party Rank"]),
         ("family_rank", "Family Rank", ["Family Game Rank", "Family Rank"]),
-    ]   
+    ]
 
     # BGG embeds ranks in rankinfo objects, e.g.:
     # {"shortprettyname":"Strategy Rank", "rank":"55", ...}
@@ -557,7 +558,7 @@ def parse_game_ranks(html_content: str) -> dict:
 
 def parse_general_stats(html_content: str) -> dict:
     """Extracts general statistics like number of ratings, comments, fans, and page views from the HTML content."""
-    
+
     game_data = {}
 
     # Extract Number of Ratings
@@ -569,15 +570,15 @@ def parse_general_stats(html_content: str) -> dict:
     )
 
     stat_targets = [
-            ("comments", "Comments", ["numcomments", "comments"]),
-            ("fans", "Fans", ["numfans", "fans"]),
-            (
-                "page_views",
-                "Page Views",
-                ["numpageviews", "pageviews", "views", "numviews"],
-            ),
-        ]
-    
+        ("comments", "Comments", ["numcomments", "comments"]),
+        ("fans", "Fans", ["numfans", "fans"]),
+        (
+            "page_views",
+            "Page Views",
+            ["numpageviews", "pageviews", "views", "numviews"],
+        ),
+    ]
+
     for field_name, dom_title, json_keys in stat_targets:
         dom_value = ""
         item_pattern = (
@@ -841,7 +842,6 @@ def parse_ratings_and_awards(html_content: str) -> dict:
     game_data = {}
 
     # --- avg_rating ---
-    
 
     rating_targets = [
         (
@@ -973,81 +973,81 @@ def parse_relationship_fields(html_content: str) -> dict:
     ]
 
     for field_name, dom_title, json_keys in relationship_targets:
-      dom_values = []
+        dom_values = []
 
-      # Matches 'feature' or 'outline-item' wrappers
-      item_pattern = r'<(?:li|div)\b[^>]*class=["\'][^"\']*\b(?:outline-item|feature)\b[^"\']*["\'][^>]*>(.*?)<\/(?:li|div)>'
+        # Matches 'feature' or 'outline-item' wrappers
+        item_pattern = r'<(?:li|div)\b[^>]*class=["\'][^"\']*\b(?:outline-item|feature)\b[^"\']*["\'][^>]*>(.*?)<\/(?:li|div)>'
 
-      for item_match in re.finditer(
-          item_pattern, html_content, re.IGNORECASE | re.DOTALL
-      ):
-        item_html = item_match.group(1)
-
-        # Match title header (.feature-title or .outline-item-title)
-        title_match = re.search(
-            r'<(?:div|h4)\b[^>]*class=["\'][^"\']*\b(?:outline-item-title|feature-title)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|h4)>',
-            item_html,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if not title_match:
-          continue
-
-        # --- TOTO TU CHÝBALO: Overenie, či sme v správnej sekcii (napr. "Reimplements") ---
-        title_text = clean_html_text(title_match.group(1)).casefold()
-        if dom_title.casefold() not in title_text:
-          continue
-
-        anchor_pattern = (
-            r'<a\b[^>]*href=["\'](/boardgame/(\d+)/[^"\']*)["\'][^>]*>(.*?)</a>'
-        )
-
-        for anchor_match in re.finditer(
-            anchor_pattern, item_html, re.IGNORECASE | re.DOTALL
+        for item_match in re.finditer(
+            item_pattern, html_content, re.IGNORECASE | re.DOTALL
         ):
-          full_href = anchor_match.group(1)
-          app_id = anchor_match.group(2)  # app_id hry pre queue
-          raw_text = anchor_match.group(3)
+            item_html = item_match.group(1)
 
-          clean_val = clean_html_text(raw_text)
+            # Match title header (.feature-title or .outline-item-title)
+            title_match = re.search(
+                r'<(?:div|h4)\b[^>]*class=["\'][^"\']*\b(?:outline-item-title|feature-title)\b[^"\']*["\'][^>]*>(.*?)<\/(?:div|h4)>',
+                item_html,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if not title_match:
+                continue
 
-          if clean_val and clean_val not in ["...", "…"]:
-            link_info = {"app_id": app_id, "name": clean_val, "url": full_href}
+            # --- TOTO TU CHÝBALO: Overenie, či sme v správnej sekcii (napr. "Reimplements") ---
+            title_text = clean_html_text(title_match.group(1)).casefold()
+            if dom_title.casefold() not in title_text:
+                continue
 
-            if link_info not in dom_values:
-              dom_values.append(link_info)
+            anchor_pattern = (
+                r'<a\b[^>]*href=["\'](/boardgame/(\d+)/[^"\']*)["\'][^>]*>(.*?)</a>'
+            )
 
-        # Ak sme našli položky pre túto sekciu, ukončíme hľadanie itemov
+            for anchor_match in re.finditer(
+                anchor_pattern, item_html, re.IGNORECASE | re.DOTALL
+            ):
+                full_href = anchor_match.group(1)
+                app_id = anchor_match.group(2)  # app_id hry pre queue
+                raw_text = anchor_match.group(3)
+
+                clean_val = clean_html_text(raw_text)
+
+                if clean_val and clean_val not in ["...", "…"]:
+                    link_info = {"app_id": app_id, "name": clean_val, "url": full_href}
+
+                    if link_info not in dom_values:
+                        dom_values.append(link_info)
+
+            # Ak sme našli položky pre túto sekciu, ukončíme hľadanie itemov
+            if dom_values:
+                break
+
         if dom_values:
-          break
+            game_data[field_name] = dom_values
+            continue
 
-      if dom_values:
-        game_data[field_name] = dom_values
-        continue
+        # --- JSON Fallback (zostáva nezmenený pod týmto) ---
+        found_vals = []
+        for key in json_keys:
+            json_match = re.search(
+                rf'"{key}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})',
+                html_content,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if json_match:
+                raw_json_val = json_match.group(1)
+                extracted_names = re.findall(
+                    r'"(?:name|text)"\s*:\s*"([^"]+)"', raw_json_val, re.IGNORECASE
+                )
+                for name in extracted_names:
+                    clean_name = decode_json_string(name)
+                    if clean_name and clean_name not in found_vals:
+                        found_vals.append(clean_name)
+                if found_vals:
+                    break
 
-      # --- JSON Fallback (zostáva nezmenený pod týmto) ---
-      found_vals = []
-      for key in json_keys:
-        json_match = re.search(
-            rf'"{key}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})',
-            html_content,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if json_match:
-          raw_json_val = json_match.group(1)
-          extracted_names = re.findall(
-              r'"(?:name|text)"\s*:\s*"([^"]+)"', raw_json_val, re.IGNORECASE
-          )
-          for name in extracted_names:
-            clean_name = decode_json_string(name)
-            if clean_name and clean_name not in found_vals:
-              found_vals.append(clean_name)
-          if found_vals:
-            break
-
-      game_data[field_name] = found_vals
+        game_data[field_name] = found_vals
 
     # return game_data
-    
+
     return game_data
 
 
@@ -1073,6 +1073,7 @@ class ParserGroup(StrEnum):
     PLAYER_PLAYS_STATS = "player_plays_stats"
     GAME_RANKS = "game_ranks"
     RELATIONSHIP_FIELDS = "relationship_fields"
+
 
 GROUP_FIELD_MAPPINGS: Dict[ParserGroup, list[str]] = {
     ParserGroup.GENERAL_FIELDS: [
@@ -1140,6 +1141,10 @@ GROUP_FIELD_MAPPINGS: Dict[ParserGroup, list[str]] = {
         "contained_in",
     ],
 }
+
+FIELDS_COMPLETE_LIST = [
+    field for fields in GROUP_FIELD_MAPPINGS.values() for field in fields
+]
 
 # 1. Mapping dictionary built with symbols (F2 safe)
 parsing_mappings: Dict[ParserGroup, Callable] = {

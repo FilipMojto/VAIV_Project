@@ -11,21 +11,11 @@ from tqdm import tqdm
 
 from src.properties import safe_interrupt_handler
 from src.crawling import BrowserConnectionError, PageHTMLFetcher
-from src.config import BGG_GAMES_DIR, DATA_DIR, OUTPUT_FILE, OUTPUT_TSV
+from src.config import BGG_GAMES_DIR, DATA_DIR, BGG_FILE_NAME, BGG_TSV
 
 # from src.scrapehtml import OUTPUT_TSV, load_page_html
 from src.parsing import GROUP_FIELD_MAPPINGS, ParserGroup, parse_html_metadata
 from src.versioning import SmartVersioner
-
-# Sem importuješ svoju existujúcu parsovaciu logiku (zostáva nezmenená!)
-# from parser import parse_game_html
-
-# # --- CONFIGURATION ---
-# OUTPUT_DIR = DATA_DIR / "bgg_raw_htmls"
-# OUTPUT_TSV = BGG_GAMES_DIR / "bgg_games.tsv"
-
-# os.makedirs(BGG_GAMES_DIR, exist_ok=True)
-# os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 # 1. POČIATOČNÝ SEED (prvých 5-10 známych hier z BGG)
@@ -78,9 +68,9 @@ parser.add_argument(
     "--output",
     type=str,
     required=False,
-    default=OUTPUT_FILE,
+    default=BGG_FILE_NAME,
     help=f"""The TSV filename. Interrupted runs resume from its crawl-state file.
-    Choose a different name to start a fresh crawl. Defaults to {OUTPUT_FILE}""",
+    Choose a different name to start a fresh crawl. Defaults to {BGG_FILE_NAME}""",
 )
 
 args = parser.parse_args()
@@ -189,7 +179,7 @@ def run_crawler(
         field for fields in GROUP_FIELD_MAPPINGS.values() for field in fields
     ]
     scraper_versioner = SmartVersioner(
-        base_filename=output_file_path.stem,
+        stem=output_file_path.stem,
         data_dir=output_file_path.parent,
         extension=output_file_path.suffix,
     )
