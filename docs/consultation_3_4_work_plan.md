@@ -23,12 +23,21 @@ Status reflects the latest verified project information available in the develop
 - [x] Verify that important project files are tracked and intended new files are included.
 - [x] Inspect `.gitignore` for datasets, raw HTML, TSV/CSV/JSON exports, compressed dumps, generated indexes, Spark output and virtual environments.
 - [x] Review staged changes, confirm both Python file relocations and check for whitespace errors.
-- [ ] Commit the final repository baseline and documentation.
-- [ ] Push to GitHub and verify that local `main` and `origin/main` point to the same commit.
+- [x] Commit the final repository baseline and documentation.
+- [x] Push to GitHub and verify that local `main` and `origin/main` point to the same commit.
 
-### Latest verified Git state
+### Verified Git state
 
-At the last audit on 2026-11-20:
+#### Latest verified Git state
+
+- Branch: `main`.
+- Working tree: clean.
+- Local `main` and `origin/main` point to the same commit.
+- Latest commit: `33fd1d37f024c0e8db5f4849189ba971b177b8c3`.
+- Commit message: `chore(repo): finalize project baseline and documentation`.
+- All intended documentation and experiment-file changes have been committed and pushed.
+
+#### Audit on 2026-11-20:
 
 - Current branch was `main`.
 - Working tree was clean (`git status --short --branch` returned `## main`).
