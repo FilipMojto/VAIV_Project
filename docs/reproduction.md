@@ -164,24 +164,22 @@ Expected result: PyLucene version `9.12.0` and one matching document. The actual
 
 ## 6. Data requirements
 
-The project uses BGG records in TSV format. During development, the dataset was described as approximately 17,652 records and 42 fields. Confirm the final file's row count and schema before using those figures in a report.
+The selected BGG snapshot inspected on 20 November 2026 is `data/bgg_games/bgg_games_20261025_113653.tsv`. It contains 17,652 data rows and 43 columns, representing 17,648 distinct `app_id` values. Four IDs occur twice; each duplicate pair is identical across all columns. The controlled retrieval experiment should use one row per `app_id` (17,648 unique records) while preserving the original source TSV unchanged. See [the reproducibility audit](reproducibility_audit.md) for the dataset findings and duplicate IDs.
 
-The project also requires a Wikipedia XML dump in `.xml.bz2` format for the planned Spark enrichment phase. The dump is a large external input and should not be committed to Git. Document its source, download date/version, checksum and exact path when the pipeline is finalized.
+A Wikipedia dump is present locally at `data/wiki/enwiki-latest-pages-articles.xml.bz2`, but it is ignored by Git and its rolling `latest` filename does not identify a fixed release. No Wikipedia/Spark extraction and join implementation was found in the audited repository. Do not treat this local file as a reproducible project input yet. If it is used in a future pipeline, record its source, fixed release/date, download date and checksum.
 
-Generated outputs such as Spark output directories and Lucene indexes should also remain outside version control unless a small reproducible sample is intentionally committed.
+Generated outputs such as Spark output directories and Lucene indexes should remain outside version control unless a small reproducible sample is intentionally committed. The 24 parser HTML fixtures under `testing/fixtures/` are intentionally version-controlled test inputs.
 
-## 7. Reproducing the project itself
+## 7. Reproducing the project in its current state
 
-A complete end-to-end reproduction guide still depends on finalizing the entry points and configuration for each pipeline stage. At minimum, a fresh user will need to:
+The repository contains several independently reproducible components, but not a complete end-to-end course pipeline. The current boundary is:
 
-1. clone the repository;
-2. create the supported Python environment;
-3. install the declared project dependencies;
-4. build/install PyLucene using the compatible Java/JCC toolchain if Lucene tasks are required;
-5. obtain the BGG TSV dataset and the documented Wikipedia dump;
-6. run the BGG/custom-indexer stage;
-7. run the Spark extraction and join stage;
-8. build the Lucene index and run the required query types;
-9. run the evaluation scripts using the documented query set and relevance judgments.
+1. **Python setup:** create the Python 3.11 virtual environment and install the dependencies needed for the component being used. `requirements.txt` is the only dependency manifest, but it uses minimum versions and is not a complete lock of the native Spark/PyLucene toolchain.
+2. **Parser tests:** install the test dependencies and run `python -m pytest testing/test_parsing.py` from the repository root. The tests use committed local HTML fixtures and do not require a live browser. A successful pytest run in a clean environment remains to be recorded.
+3. **Dataset validation:** run `python -m experiments.testdata data/bgg_games/bgg_games_20261025_113653.tsv` to inspect the validator's supported arguments, then validate the selected TSV.
+4. **BGG crawling:** install Playwright and tqdm. For uncached pages, start Chrome with remote debugging as described in `docs/startchrome.md`; the crawler connects to that external browser through CDP. Preserve both the TSV snapshot and crawl-state JSON when resuming a crawl. Cached HTML can avoid live requests for pages already captured.
+5. **Custom Python indexer:** `src/indexers.py` provides the current natural-TF, classic-IDF and smoothed-IDF baseline. Its command-line handling and logging are currently coupled to module import, and its final experiment interface has not yet been designed.
+6. **Spark:** the local Spark smoke test in this guide is reproducible in the recorded environment. The Wikipedia extraction, BGG join and report are not yet implemented in the audited repository.
+7. **PyLucene:** the in-memory smoke test in this guide verifies the native installation. A project BGG index, schema and query workflows are not yet implemented.
 
-The exact commands for steps 5–9 should be added after the relevant project entry points and output paths are finalized. They are intentionally not invented in this document.
+Consequently, a fresh user can reproduce individual verified environment checks and can work with the existing BGG/parser/indexer code after installing its dependencies and supplying the required data. They cannot yet reproduce a complete BGG → Wikipedia/Spark → PyLucene → evaluation pipeline. See [the Phase 3.2 reproducibility audit](reproducibility_audit.md) for the detailed component-by-component findings and limitations.

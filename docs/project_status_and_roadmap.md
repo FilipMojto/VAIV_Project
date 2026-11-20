@@ -14,17 +14,15 @@ Build and evaluate a search engine over BoardGameGeek board-game records. The pr
 4. retrieval-model and query-feature comparisons;
 5. evaluation and reporting suitable for the VINF consultations and final presentation.
 
-The dataset has been described during development as approximately 17,652 BGG game records, with a TSV containing 42 fields. The exact record count should be rechecked against the final dataset before reporting it as a final result.
+The dataset audit found a TSV with 43 columns. Four `app_id` values (13, 266192, 30549 and 822) appeared twice as fully identical rows. Keeping one record per `app_id` gives 17,648 unique game records for the experimental corpus. Earlier development notes quoted approximately 17,652 records and 42 fields; those were pre-audit figures. The exact counts should still be rechecked against the final dataset file before they are reported as final results.
 
 ## 2. Work completed
 
 ### 2.1 BGG collection and dataset preparation — implemented
 
-The repository already contains a BGG crawling and extraction workflow. Recent Git history includes work on HTML crawling, game metadata extraction, relationship parsing, TSV writing and validation, reparsing existing records, resumable graph crawling and periodic checkpoints.
+The repository contains a BGG crawling and extraction workflow. It uses a local HTML cache, Playwright connected to an externally launched Chrome instance through CDP, TSV snapshots and a JSON crawl-state file for resuming traversal. A fresh end-to-end crawl was not performed during the Phase 3.2 audit; live crawling still depends on browser configuration, network access and BGG challenge handling.
 
-The project uses a tab-separated BGG dataset. Large raw data and generated files are excluded from version control through `.gitignore` rules.
-
-The exact completeness and quality of the final dataset still need to be checked before the final evaluation.
+The selected snapshot inspected for the retrieval experiment is `data/bgg_games/bgg_games_20261025_113653.tsv`: 17,652 data rows, 43 columns and 17,648 distinct `app_id` values. Four IDs occur twice, with each pair identical across all columns. The experiment will retain one row per ID (17,648 unique games) while preserving the original TSV unchanged. Detailed findings are recorded in [the reproducibility audit](reproducibility_audit.md).
 
 ### 2.2 Custom Python indexer — implemented baseline
 
@@ -100,7 +98,11 @@ No push was performed as part of that audit. Recheck Git status and remote diver
 
 #### 2nd Audit (20th Nov. 2026)
 
-the intended changes are staged, both relocations are 100% identical, and the staged whitespace check is clean. State explicitly that the final commit and push are still pending.
+The parser test fixtures and offline parser tests were committed locally in `ea231a5` (`test: make parser tests independent of live BGG`). At the start of the Phase 3.2 documentation update, the branch was one commit ahead of `origin/main`; no push had been performed.
+
+### 2.7 Reproducibility audit — completed 20 November 2026
+
+The repository and local development environment were audited. The findings and current reproduction boundary are recorded in [reproducibility_audit.md](reproducibility_audit.md), and the practical reproduction guide was updated. Spark and PyLucene are environment-smoke-tested only; the Wikipedia/Spark enrichment pipeline and project-level PyLucene index/search implementation are not present in the audited repository. The selected BGG dataset snapshot contains 17,652 rows, 43 columns and 17,648 unique game IDs after removing four exact duplicate pairs.
 
 ## 3. Course requirements and remaining work
 
@@ -108,7 +110,7 @@ The following is the working plan based on the consultations and requirements di
 
 | Work package | Intended output | Current state |
 |---|---|---|
-| BGG crawling and TSV preparation | A reproducible BGG dataset with validated records | Implemented; final dataset validation/count still required |
+| BGG crawling and TSV preparation | A reproducible BGG dataset with validated records | Crawler and validator implemented; selected snapshot inspected; 17,648 unique IDs after deterministic deduplication |
 | Custom indexer and index description | Explain index structure, TF, indexing frequency/build process | Basic custom indexer implemented; documentation and final explanation remain |
 | At least two IDF ranking methods | Implement and explain at least two IDF variants | Classic and smoothed IDF already implemented; lecture-based comparison/selection remains |
 | Compare IDF methods on at least three queries | Demonstrate ranking differences on a fixed query set | Not yet documented as a controlled experiment |
@@ -122,13 +124,14 @@ The following is the working plan based on the consultations and requirements di
 
 ## 4. Planned next phases
 
-### Phase A — documentation and reproducibility
+### Phase A — documentation and reproducibility — completed 20 November 2026
 
-- Maintain this status/roadmap document.
-- Document the lecture's TF, IDF and normalization methods.
-- Document the verified Python, Spark and PyLucene environment.
-- Explain how to reproduce the environment and smoke tests.
-- Clarify which dependency file/tool is authoritative for the project.
+- Reviewed repository workflows, dependencies, data artifacts and external prerequisites.
+- Recorded the verified Python, Spark and PyLucene environment and distinguished environment smoke tests from implemented project pipelines.
+- Documented the current BGG crawler, parser tests, dataset state and custom indexer, including known reproducibility limitations.
+- Updated the reproduction guide to describe what can currently be reproduced and what remains unimplemented.
+- Recorded dependency-manifest limitations; selecting and formalizing one authoritative dependency workflow remains future maintenance work.
+- Audit record: [reproducibility_audit.md](reproducibility_audit.md).
 
 ### Phase B — controlled analysis of lecture weighting methods
 
