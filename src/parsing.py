@@ -211,9 +211,6 @@ def parse_game_metrics(html_content: str) -> dict:
     min_time = min_time_match.group(1) if min_time_match else ""
     max_time = max_time_match.group(1) if max_time_match else ""
 
-    if (min_time == 0 or min_time == "0") or (max_time == 0 or max_time == "0"):
-        print("HERE")
-
     game_data["play_time_min"] = "" if min_time == 0 or min_time == "0" else min_time
     game_data["play_time_max"] = "" if max_time == 0 or max_time == "0" else max_time
 
