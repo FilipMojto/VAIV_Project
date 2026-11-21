@@ -11,7 +11,7 @@ from pathlib import Path
 
 from src.config import BGG_GAMES_DIR
 from src.versioning import SmartVersioner
-from experiments.testdata import EXPECTED_FIELDS
+from src.data_schema import EXPECTED_FIELDS
 
 
 SOURCE_STEM = "bgg_games"

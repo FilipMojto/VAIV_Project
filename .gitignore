@@ -227,6 +227,7 @@ data/**/*.zip
 data/**/*.tar
 data/**/*.gz
 data/**/*.bz2
+/data/indexes/
 
 src/bgg_browser_profile/
 # Project browser profiles & local build/index artifacts
