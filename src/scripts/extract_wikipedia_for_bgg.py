@@ -13,8 +13,8 @@ project_root = Path(__file__).resolve().parents[2]
 
 bgg_path = project_root / "data/bgg_games/bgg_games_deduplicated_20261121_003935.tsv"
 wiki_path = project_root / "data/wiki/enwiki-latest-pages-articles.xml.bz2"
-output_path = project_root / "data/wiki_extracted/bgg_wikipedia_matches"
-
+# output_path = project_root / "data/wiki_extracted/bgg_wikipedia_matches"
+output_path = project_root / "data/wiki_extracted/bgg_wikipedia_matches_expanded"
 
 spark = (
     SparkSession.builder

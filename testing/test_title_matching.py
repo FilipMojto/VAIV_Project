@@ -233,13 +233,23 @@ class TestTitleVariants(unittest.TestCase):
                 ("Wingspan", "wingspan", "primary"),
                 ("Flügelschlag", "flügelschlag", "alternate"),
                 ("Fesztáv", "fesztáv", "alternate"),
-            ]
+                ("Wingspan (board game)", "wingspan board game", "primary_board_game"),
+                ("Wingspan (game)", "wingspan game", "primary_game"),
+                ("Flügelschlag (board game)", "flügelschlag board game", "alternate_board_game"),
+                ("Flügelschlag (game)", "flügelschlag game", "alternate_game"),
+                ("Fesztáv (board game)", "fesztáv board game", "alternate_board_game"),
+                ("Fesztáv (game)", "fesztáv game", "alternate_game"),
+            ],
         )
 
     def test_removes_duplicate_normalized_variants(self):
         self.assertEqual(
             get_title_variants("Pandemic", "PANDEMIC | pandemic"),
-            [("Pandemic", "pandemic", "primary")],
+            [
+                ("Pandemic", "pandemic", "primary"),
+                ("Pandemic (board game)", "pandemic board game", "primary_board_game"),
+                ("Pandemic (game)", "pandemic game", "primary_game"),
+            ],
         )
 
     def test_decodes_escaped_alternate_names(self):
@@ -248,7 +258,19 @@ class TestTitleVariants(unittest.TestCase):
             [
                 ("Wingspan", "wingspan", "primary"),
                 ("Крылья", "крылья", "alternate"),
-            ]
+                ("Wingspan (board game)", "wingspan board game", "primary_board_game"),
+                ("Wingspan (game)", "wingspan game", "primary_game"),
+                (
+                    "Крылья (board game)",
+                    "крылья board game",
+                    "alternate_board_game",
+                ),
+                (
+                    "Крылья (game)",
+                    "крылья game",
+                    "alternate_game",
+                ),
+            ],
         )
 
     def test_deduplicates_punctuation_variants(self):
@@ -259,7 +281,11 @@ class TestTitleVariants(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [("A-B", "a b", "primary")],
+            [
+                ("A-B", "a b", "primary"),
+                ("A-B (board game)", "a b board game", "primary_board_game"),
+                ("A-B (game)", "a b game", "primary_game"),
+            ],
         )
 
     def test_first_valid_variant_retains_alternate_type(self):
@@ -267,7 +293,109 @@ class TestTitleVariants(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [("Valid Alternate", "valid alternate", "alternate")],
+            [
+                ("Valid Alternate", "valid alternate", "alternate"),
+                (
+                    "Valid Alternate (board game)",
+                    "valid alternate board game",
+                    "alternate_board_game",
+                ),
+                (
+                    "Valid Alternate (game)",
+                    "valid alternate game",
+                    "alternate_game",
+                ),
+            ],
+        )
+
+
+    def test_generates_game_specific_variants_for_primary_title(self):
+        self.assertEqual(
+            get_title_variants("Scotland Yard"),
+            [
+                ("Scotland Yard", "scotland yard", "primary"),
+                (
+                    "Scotland Yard (board game)",
+                    "scotland yard board game",
+                    "primary_board_game",
+                ),
+                (
+                    "Scotland Yard (game)",
+                    "scotland yard game",
+                    "primary_game",
+                ),
+            ],
+        )
+
+    def test_generates_game_specific_variants_for_alternate_names(self):
+        result = get_title_variants(
+            "Original Title",
+            "Alternate Title",
+        )
+
+        self.assertEqual(
+            result,
+            [
+                ("Original Title", "original title", "primary"),
+                ("Alternate Title", "alternate title", "alternate"),
+                (
+                    "Original Title (board game)",
+                    "original title board game",
+                    "primary_board_game",
+                ),
+                (
+                    "Original Title (game)",
+                    "original title game",
+                    "primary_game",
+                ),
+                (
+                    "Alternate Title (board game)",
+                    "alternate title board game",
+                    "alternate_board_game",
+                ),
+                (
+                    "Alternate Title (game)",
+                    "alternate title game",
+                    "alternate_game",
+                ),
+            ],
+        )
+
+    def test_preserves_explicit_alternate_over_generated_variant(self):
+        result = get_title_variants(
+            "Scotland Yard",
+            "Scotland Yard (board game)",
+        )
+
+        matching = [
+            variant
+            for variant in result
+            if variant[1] == "scotland yard board game"
+        ]
+
+        self.assertEqual(
+            matching,
+            [
+                (
+                    "Scotland Yard (board game)",
+                    "scotland yard board game",
+                    "alternate",
+                )
+            ],
+        )
+
+    def test_does_not_append_redundant_game_suffixes(self):
+        result = get_title_variants("Scotland Yard (board game)")
+
+        self.assertEqual(
+            result,
+            [
+                (
+                    "Scotland Yard (board game)",
+                    "scotland yard board game",
+                    "primary",
+                )
+            ],
         )
 
 

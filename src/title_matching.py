@@ -62,11 +62,12 @@ def normalize_title(text: str) -> str:
     return " ".join(normalized.split())
 
 
+
 def get_title_variants(
     title: str,
     alternate_names: str | None = None,
 ) -> list[tuple[str, str, str]]:
-    """Return unique (original spelling, normalized key, variant type) tuples."""
+    """Return unique title variants with their normalized keys and types."""
 
     candidates = [(decode_unicode_escapes(title), "primary")]
 
@@ -75,10 +76,31 @@ def get_title_variants(
         for name in split_alternate_names(alternate_names)
     )
 
+    # Preserve all original BGG names before generating additional variants.
+    # This ensures that an explicitly supplied alternate name takes priority
+    # over an equivalent generated variant.
+    expanded_candidates = list(candidates)
+
+    for candidate, variant_type in candidates:
+        original = candidate.strip()
+
+        # Do not generate variants from titles that cannot produce a valid key.
+        if not normalize_title(original):
+            continue
+
+        # Avoid generating redundant suffixes for already-qualified titles.
+        if re.search(r"\((?:board game|game)\)\s*$", original, re.IGNORECASE):
+            continue
+
+        expanded_candidates.extend([
+            (f"{original} (board game)", f"{variant_type}_board_game"),
+            (f"{original} (game)", f"{variant_type}_game"),
+        ])
+
     variants = []
     seen_keys = set()
 
-    for candidate, variant_type in candidates:
+    for candidate, variant_type in expanded_candidates:
         original = candidate.strip()
         key = normalize_title(original)
 
@@ -87,6 +109,7 @@ def get_title_variants(
             seen_keys.add(key)
 
     return variants
+
 
 
 def build_title_match_index(
