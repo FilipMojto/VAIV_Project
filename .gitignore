@@ -235,3 +235,6 @@ bgg_browser_profile/
 src/bgg_browser_profile/
 lucene_index/
 spark_output/
+
+# parquet files of extracted Wikipedia pages
+/data/wiki_extracted/

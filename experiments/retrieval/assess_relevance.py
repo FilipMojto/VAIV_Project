@@ -1,17 +1,29 @@
 
-"""Interactive, keyword-assisted relevance assessment for BGG retrieval experiments."""
+"""Interactive relevance assessment for the BGG retrieval experiments.
+
+Supports two independent assessment sources:
+- tfidf: Original pools generated from the TF-IDF configurations.
+- lucene: Additional documents retrieved by the Lucene experiments.
+
+Completed judgments are stored separately for each source.
+"""
+
+from __future__ import annotations
 
 import argparse
 import csv
 import os
 import re
-import sys
 import tempfile
 from pathlib import Path
 
 
-ASSESSMENT_DIR = Path("data/assessment/formal_evaluation")
-COMPLETED_DIR = Path("data/assessment/completed")
+TFIDF_ASSESSMENT_DIR = Path("data/assessment/formal_evaluation")
+TFIDF_COMPLETED_DIR = Path("data/assessment/completed")
+
+LUCENE_ASSESSMENT_DIR = Path("data/assessment/lucene_extension")
+LUCENE_COMPLETED_DIR = Path("data/assessment/lucene_extension_completed")
+
 
 QUERIES = {
     "Q01": {
@@ -27,242 +39,531 @@ QUERIES = {
             "medical", "medicine", "hospital", "cure", "cures",
             "treatment", "treat", "treating", "immunization",
             "quarantine", "spread", "spreading", "vaccine",
-            "vaccination", "health"
+            "vaccination", "health",
+        ],
+    },
+    "Q02": {
+        "name": "medieval economic strategy",
+        "filename": "Q02_medieval_economic_strategy.tsv",
+        "keywords": [
+            "medieval", "middle ages", "feudal", "feudalism",
+            "kingdom", "castle", "economic", "economy",
+            "economics", "trade", "trading", "trader",
+            "merchant", "merchants", "market", "markets",
+            "commerce", "commercial", "production", "produce",
+            "resource", "resources", "management", "worker",
+            "workers", "placement", "agriculture", "farming",
+            "industry", "industries", "coin", "coins", "money",
+            "wealth", "income", "investment", "investments",
+        ],
+    },
+    "Q03": {
+        "name": "space exploration",
+        "filename": "Q03_space_exploration.tsv",
+        "keywords": [
+            "space", "exploration", "explore", "exploring",
+            "explorer", "explorers", "planet", "planets",
+            "planetary", "galaxy", "galaxies", "galactic",
+            "universe", "cosmos", "cosmic", "star", "stars",
+            "stellar", "solar", "system", "systems", "orbit",
+            "orbital", "astronaut", "astronauts", "spacecraft",
+            "spaceship", "spaceships", "ship", "ships",
+            "interstellar", "extraterrestrial", "alien",
+            "aliens", "moon", "moons", "asteroid", "asteroids",
+            "colony", "colonization", "colonisation",
+        ],
+    },
+    "Q04": {
+        "name": "deck building fantasy",
+        "filename": "Q04_deck_building_fantasy.tsv",
+        "keywords": [
+            "deck", "decks", "deckbuilding", "deck-building",
+            "deck building", "deckbuilder", "card", "cards",
+            "card-based", "fantasy", "fantastical", "magic",
+            "magical", "wizard", "wizards", "sorcerer",
+            "sorcerers", "witch", "witches", "spell", "spells",
+            "dragon", "dragons", "dungeon", "dungeons",
+            "mythical", "mythology", "monster", "monsters",
+            "adventure", "adventurers", "hero", "heroes",
+        ],
+    },
+    "Q05": {
+        "name": "hidden role deduction",
+        "filename": "Q05_hidden_role_deduction.tsv",
+        "keywords": [
+            "hidden", "secret", "secrets", "role", "roles",
+            "identity", "identities", "deduction", "deduce",
+            "deducing", "deductive", "suspicion", "suspect",
+            "suspects", "traitor", "traitors", "betrayal",
+            "betray", "bluff", "bluffing", "deception",
+            "deceive", "deceiving", "lying", "lie", "lies",
+            "clue", "clues", "information", "investigation",
+            "investigate", "inference", "infiltrator",
+            "infiltrators", "imposter", "impostor",
+            "imposters", "impostors", "team", "teams",
+        ],
+    },
+    "Q06": {
+        "name": "civilization development",
+        "filename": "Q06_civilization_development.tsv",
+        "keywords": [
+            "civilization", "civilisation", "civilizations",
+            "civilisations", "civilizational", "civilisational",
+            "development", "develop", "developing", "evolve",
+            "evolution", "technology", "technologies",
+            "technological", "culture", "cultural", "economy",
+            "economic", "empire", "empires", "territory",
+            "territories", "expansion", "expand", "expanding",
+            "population", "society", "societies", "nation",
+            "nations", "history", "historical", "progress",
+            "advancement", "advancements", "agriculture",
+            "science", "research", "government",
+        ],
+    },
+    "Q07": {
+        "name": "train route building",
+        "filename": "Q07_train_route_building.tsv",
+        "keywords": [
+            "train", "trains", "training", "rail", "railway",
+            "railways", "railroad", "railroads", "railway",
+            "locomotive", "locomotives", "track", "tracks",
+            "route", "routes", "routing", "network", "networks",
+            "transport", "transportation", "transit", "freight",
+            "cargo", "station", "stations", "locomotion",
+            "connection", "connections", "connect", "connecting",
+            "lines", "line", "express", "steam",
+        ],
+    },
+    "Q08": {
+        "name": "negotiation trading",
+        "filename": "Q08_negotiation_trading.tsv",
+        "keywords": [
+            "negotiation", "negotiations", "negotiate",
+            "negotiating", "negotiated", "bargain", "bargaining",
+            "bargains", "deal", "deals", "deal-making",
+            "trading", "trade", "trades", "trader", "traders",
+            "exchange", "exchanging", "transaction",
+            "transactions", "agreement", "agreements",
+            "diplomacy", "diplomatic", "alliance", "alliances",
+            "auction", "auctions", "market", "markets",
+            "commerce", "merchant", "merchants", "player-to-player",
+            "player", "players",
+        ],
+    },
+    "Q09": {
+        "name": "solo adventure campaign",
+        "filename": "Q09_solo_adventure_campaign.tsv",
+        "keywords": [
+            "solo", "solitaire", "single-player", "adventure",
+            "adventures", "adventurer", "adventurers",
+            "campaign", "campaigns", "scenario", "scenarios",
+            "narrative", "story", "stories", "storytelling",
+            "quest", "quests", "mission", "missions",
+            "journey", "journeys", "exploration", "explore",
+            "character", "characters", "progression",
+            "progress", "chapter", "chapters", "legacy",
+            "cooperative", "one-player",
         ],
     },
 }
 
 
-YELLOW = "\033[1;33m"
-RESET = "\033[0m"
+def resolve_paths(query_id: str, source: str) -> tuple[Path, Path]:
+    """Return the source and completed assessment paths."""
+
+    query = QUERIES[query_id]
+
+    if source == "tfidf":
+        assessment_dir = TFIDF_ASSESSMENT_DIR
+        completed_dir = TFIDF_COMPLETED_DIR
+    elif source == "lucene":
+        assessment_dir = LUCENE_ASSESSMENT_DIR
+        completed_dir = LUCENE_COMPLETED_DIR
+    else:
+        raise ValueError(f"Unknown assessment source: {source}")
+
+    return (
+        assessment_dir / query["filename"],
+        completed_dir / query["filename"],
+    )
 
 
-def build_keyword_pattern(keywords):
+def build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
+    """Build a case-insensitive pattern for highlighting query keywords."""
+
+    if not keywords:
+        return None
+
     alternatives = sorted(
-        (re.escape(word) for word in keywords),
+        {re.escape(keyword) for keyword in keywords},
         key=len,
         reverse=True,
     )
-    return re.compile(
-        r"\b(?:" + "|".join(alternatives) + r")\b",
-        flags=re.IGNORECASE,
-    )
+
+    expression = r"(?<!\w)(?:" + "|".join(alternatives) + r")(?!\w)"
+
+    return re.compile(expression, re.IGNORECASE)
 
 
-def highlight(text, pattern):
-    """Highlight matching words without changing the underlying text."""
-    if not text:
+def highlight(value: str | None, pattern: re.Pattern | None) -> str:
+    """Highlight matching terms unless terminal colouring is disabled."""
+
+    if not value:
         return "(none)"
 
-    if os.environ.get("NO_COLOR"):
-        return text
+    if pattern is None or os.environ.get("NO_COLOR"):
+        return value
 
     return pattern.sub(
-        lambda match: f"{YELLOW}{match.group(0)}{RESET}",
-        text,
+        lambda match: f"\033[93m{match.group(0)}\033[0m",
+        value,
     )
 
 
-def save_rows(path, fieldnames, rows):
-    """Atomically save the completed assessment TSV."""
+
+def save_rows(
+    path: Path,
+    fieldnames: list[str],
+    rows: list[dict[str, str]],
+) -> None:
+    """Atomically save assessment rows as a UTF-8-BOM TSV."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8-sig",
-        newline="",
-        dir=path.parent,
-        suffix=".tmp",
-        delete=False,
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-        writer = csv.DictWriter(
-            temporary,
-            fieldnames=fieldnames,
-            delimiter="\t",
-            extrasaction="raise",
-        )
-        writer.writeheader()
-        writer.writerows(rows)
+    temporary_path = None
 
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8-sig",
+            newline="",
+            suffix=".tmp",
+            prefix=f".{path.name}.",
+            dir=path.parent,
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+
+            writer = csv.DictWriter(
+                temporary_file,
+                fieldnames=fieldnames,
+                delimiter="\t",
+                extrasaction="raise",
+            )
+
+            writer.writeheader()
+            writer.writerows(rows)
+
         os.replace(temporary_path, path)
-    except Exception:
-        temporary_path.unlink(missing_ok=True)
-        raise
+
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
 
 
-def load_assessment(source_path, completed_path):
-    with source_path.open(
-        encoding="utf-8-sig", newline=""
-    ) as source:
-        reader = csv.DictReader(source, delimiter="\t")
+
+def read_tsv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Read a TSV file and return its header and rows."""
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file, delimiter="\t")
+
+        if reader.fieldnames is None:
+            raise ValueError(f"Missing TSV header: {path}")
+
         fieldnames = reader.fieldnames
         rows = list(reader)
 
-    if not fieldnames or "assessment_id" not in fieldnames:
-        raise ValueError("Assessment TSV has no assessment_id column.")
+    return fieldnames, rows
 
-    if "relevance_grade" not in fieldnames:
-        raise ValueError("Assessment TSV has no relevance_grade column.")
+
+def validate_unique_values(
+    rows: list[dict[str, str]],
+    field: str,
+    path: Path,
+) -> None:
+    """Reject missing or duplicate values in an identifier column."""
+
+    values = [row.get(field, "") for row in rows]
+
+    if any(not value for value in values):
+        raise ValueError(f"Empty {field} found in {path}")
+
+    if len(values) != len(set(values)):
+        raise ValueError(f"Duplicate {field} found in {path}")
+
+
+def load_assessment(
+    source_path: Path,
+    completed_path: Path,
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Load an assessment and validate or initialise its completed copy."""
+
+    if not source_path.is_file():
+        raise FileNotFoundError(
+            f"Assessment source file does not exist: {source_path}"
+        )
+
+    fieldnames, source_rows = read_tsv(source_path)
+
+    required_fields = {"assessment_id", "app_id", "relevance_grade"}
+    missing_fields = required_fields - set(fieldnames)
+
+    if missing_fields:
+        raise ValueError(
+            f"Missing required columns in {source_path}: "
+            f"{', '.join(sorted(missing_fields))}"
+        )
+
+    validate_unique_values(source_rows, "assessment_id", source_path)
+    validate_unique_values(source_rows, "app_id", source_path)
 
     if completed_path.exists():
-        with completed_path.open(
-            encoding="utf-8-sig", newline=""
-        ) as completed:
-            reader = csv.DictReader(completed, delimiter="\t")
+        completed_fieldnames, completed_rows = read_tsv(completed_path)
 
-            if reader.fieldnames != fieldnames:
-                raise ValueError(
-                    "Completed file has different columns from the original."
-                )
-
-            completed_rows = list(reader)
-
-        original_ids = [row["assessment_id"] for row in rows]
-        completed_ids = [row["assessment_id"] for row in completed_rows]
-
-        if original_ids != completed_ids:
+        if completed_fieldnames != fieldnames:
             raise ValueError(
-                "Completed file does not match the original assessment pool."
+                f"Column mismatch in {completed_path}.\n"
+                f"Expected: {fieldnames}\n"
+                f"Found:    {completed_fieldnames}"
             )
 
+        validate_unique_values(
+            completed_rows,
+            "assessment_id",
+            completed_path,
+        )
+        validate_unique_values(
+            completed_rows,
+            "app_id",
+            completed_path,
+        )
+
+        source_ids = [row["assessment_id"] for row in source_rows]
+        completed_ids = [row["assessment_id"] for row in completed_rows]
+
+        if completed_ids != source_ids:
+            raise ValueError(
+                f"Assessment IDs or their order have changed in "
+                f"{completed_path}"
+            )
+
+        # All source fields except relevance_grade must remain unchanged.
+        identity_fields = [
+            field for field in fieldnames
+            if field != "relevance_grade"
+        ]
+
+        for index, (source_row, completed_row) in enumerate(
+            zip(source_rows, completed_rows),
+            start=1,
+        ):
+            for field in identity_fields:
+                if source_row[field] != completed_row[field]:
+                    raise ValueError(
+                        f"Source metadata changed in {completed_path}, "
+                        f"row {index}, field '{field}'."
+                    )
+
         rows = completed_rows
+
     else:
+        rows = [row.copy() for row in source_rows]
+
         completed_path.parent.mkdir(parents=True, exist_ok=True)
         save_rows(completed_path, fieldnames, rows)
 
-    grades = {"", "0", "1", "2"}
+    valid_grades = {"", "0", "1", "2"}
+
     for row in rows:
-        if row["relevance_grade"] not in grades:
+        grade = row["relevance_grade"]
+
+        if grade not in valid_grades:
             raise ValueError(
-                f"Invalid grade in {row['assessment_id']}: "
-                f"{row['relevance_grade']!r}"
+                f"Invalid relevance grade '{grade}' for "
+                f"{row['assessment_id']} in {completed_path}"
             )
 
     return fieldnames, rows
 
 
-def display_game(row, pattern, position, total):
+def display_game(
+    row: dict[str, str],
+    pattern: re.Pattern | None,
+    position: int,
+    total: int,
+) -> None:
+    """Display one game and its available metadata."""
+
     print("\n" + "=" * 78)
-    print(f"GAME {position}/{total}")
-    print(f"Assessment ID: {row['assessment_id']}")
-    print(f"BGG ID: {row['app_id']}")
-    print(f"\nTITLE: {highlight(row['game_title'], pattern)}")
-    print(f"\nRELEASE YEAR: {row['release_year']}")
+    print(f"DOCUMENT {position}/{total}")
+    print("=" * 78)
 
-    for field, label in (
-        ("short_description", "SHORT DESCRIPTION"),
-        ("description", "FULL DESCRIPTION"),
-        ("game_type", "GAME TYPE"),
-        ("game_category", "CATEGORIES"),
-        ("game_mechanic", "MECHANICS"),
-        ("designer", "DESIGNER"),
-        ("publisher", "PUBLISHER"),
-    ):
-        print(f"\n{label}:")
-        print(highlight(row.get(field, ""), pattern))
+    print(f"Assessment ID: {row.get('assessment_id', '(none)')}")
+    print(f"BGG ID:        {row.get('app_id', '(none)')}")
+    print(f"Title:         {highlight(row.get('game_title'), pattern)}")
+    print(f"Release year:  {row.get('release_year', '(none)')}")
 
-    print("\n" + "-" * 78)
+    print("\nShort description:")
+    print(highlight(row.get("short_description"), pattern))
+
+    print("\nDescription:")
+    print(highlight(row.get("description"), pattern))
+
+    print("\nGame type:")
+    print(highlight(row.get("game_type"), pattern))
+
+    print("\nCategories:")
+    print(highlight(row.get("game_category"), pattern))
+
+    print("\nMechanics:")
+    print(highlight(row.get("game_mechanic"), pattern))
+
+    print("\nDesigner:")
+    print(row.get("designer") or "(none)")
+
+    print("\nPublisher:")
+    print(row.get("publisher") or "(none)")
 
 
-def main():
+def print_summary(rows: list[dict[str, str]]) -> None:
+    """Print the current relevance-grade distribution."""
+
+    counts = {"0": 0, "1": 0, "2": 0, "": 0}
+
+    for row in rows:
+        counts[row["relevance_grade"]] += 1
+
+    total = len(rows)
+    completed = total - counts[""]
+
+    print("\n" + "=" * 50)
+    print("ASSESSMENT SUMMARY")
+    print("=" * 50)
+    print(f"Total documents: {total}")
+    print(f"Assessed:        {completed}")
+    print(f"Remaining:       {counts['']}")
+    print(f"Grade 0:         {counts['0']}")
+    print(f"Grade 1:         {counts['1']}")
+    print(f"Grade 2:         {counts['2']}")
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Interactive keyword-assisted relevance assessment."
+        description="Interactive BGG relevance assessment."
     )
+
     parser.add_argument(
         "--query",
         default="Q01",
         choices=sorted(QUERIES),
         help="Query to assess (default: Q01).",
     )
+
+    parser.add_argument(
+        "--source",
+        default="tfidf",
+        choices=["tfidf", "lucene"],
+        help="Assessment pool source (default: tfidf).",
+    )
+
     args = parser.parse_args()
 
-    query = QUERIES[args.query]
-    source_path = ASSESSMENT_DIR / query["filename"]
-    completed_path = COMPLETED_DIR / query["filename"]
+    query_id = args.query
+    query = QUERIES[query_id]
 
-    if not source_path.exists():
-        raise FileNotFoundError(source_path)
+    source_path, completed_path = resolve_paths(
+        query_id,
+        args.source,
+    )
+
+    if not source_path.is_file():
+        if args.source == "lucene":
+            print(
+                f"No Lucene extension assessment file exists for "
+                f"{query_id} ({query['name']})."
+            )
+            print(
+                "This query had no additional Lucene documents "
+                "outside its original TF-IDF assessment pool."
+            )
+            return
+
+        parser.error(f"Assessment file not found: {source_path}")
 
     fieldnames, rows = load_assessment(
-        source_path, completed_path
+        source_path,
+        completed_path,
     )
+
     pattern = build_keyword_pattern(query["keywords"])
 
-    pending = sum(
-        not row["relevance_grade"].strip() for row in rows
-    )
+    pending = [
+        index for index, row in enumerate(rows)
+        if row["relevance_grade"] == ""
+    ]
 
     print("=" * 78)
-    print(f"RELEVANCE ASSESSMENT: {args.query} – {query['name']}")
-    print(f"Total games: {len(rows)}")
-    print(f"Already assessed: {len(rows) - pending}")
-    print(f"Remaining: {pending}")
+    print(f"QUERY: {query_id} — {query['name']}")
+    print(f"Source: {args.source}")
+    print(f"Assessment file: {source_path}")
+    print(f"Completed file:  {completed_path}")
     print("=" * 78)
-    print("Highlighted words are suggestions, not automatic relevance decisions.")
-    print("Grades: 2 = highly relevant | 1 = partially relevant | 0 = not relevant")
-    print("Commands: s = skip | q = save and quit")
 
-    if pending == 0:
-        print("\nAll games in this query have already been assessed.")
+    print("\nRelevance grades:")
+    print("  0 = Not relevant")
+    print("  1 = Partially relevant")
+    print("  2 = Highly relevant")
+    print("\nCommands:")
+    print("  s = Skip this document")
+    print("  q = Save and quit")
+
+    if not pending:
+        print("\nAll documents in this assessment have been graded.")
+        print_summary(rows)
         return
 
-    while True:
-        next_index = next(
-            (
-                index for index, row in enumerate(rows)
-                if not row["relevance_grade"].strip()
-            ),
-            None,
+    print(f"\nUnassessed documents: {len(pending)}")
+
+    for position, row_index in enumerate(pending, start=1):
+        row = rows[row_index]
+
+        display_game(
+            row,
+            pattern,
+            position,
+            len(pending),
         )
-
-        if next_index is None:
-            break
-
-        row = rows[next_index]
-        display_game(row, pattern, next_index + 1, len(rows))
 
         while True:
             grade = input(
-                "Relevance grade [0/1/2, s=skip, q=quit]: "
+                "\nRelevance grade [0/1/2, s=skip, q=quit]: "
             ).strip().lower()
 
             if grade in {"0", "1", "2"}:
-                row["relevance_grade"] = grade
+                rows[row_index]["relevance_grade"] = grade
+
                 save_rows(completed_path, fieldnames, rows)
-                print(f"Saved grade {grade} for {row['assessment_id']}.")
+
+                print(f"Saved grade {grade}.")
                 break
 
             if grade == "s":
-                print("Skipped. This game remains unassessed.")
+                print("Skipped.")
                 break
 
             if grade == "q":
-                print("\nProgress saved.")
-                print(f"Completed file: {completed_path}")
+                save_rows(completed_path, fieldnames, rows)
+                print("\nAssessment saved. Exiting.")
+                print_summary(rows)
                 return
 
-            print("Please enter 0, 1, 2, s or q.")
+            print("Invalid input. Enter 0, 1, 2, s, or q.")
 
-    counts = {
-        grade: sum(
-            row["relevance_grade"] == grade for row in rows
-        )
-        for grade in ("0", "1", "2")
-    }
-    remaining = sum(
-        not row["relevance_grade"].strip() for row in rows
-    )
+    save_rows(completed_path, fieldnames, rows)
 
-    print("\n" + "=" * 78)
-    print("QUERY ASSESSMENT SUMMARY")
-    print(f"Grade 0 – Not relevant: {counts['0']}")
-    print(f"Grade 1 – Partially relevant: {counts['1']}")
-    print(f"Grade 2 – Highly relevant: {counts['2']}")
-    print(f"Still unassessed: {remaining}")
-    print(f"Saved to: {completed_path}")
-    print("=" * 78)
+    print("\nAssessment completed.")
+    print_summary(rows)
 
 
 if __name__ == "__main__":
