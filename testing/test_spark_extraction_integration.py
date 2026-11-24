@@ -5,7 +5,10 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession
 
-from src.wiki_spark_extraction import extract_matching_wikipedia_pages
+from src.wiki_spark_extraction import (
+    extract_matching_wikipedia_pages,
+    extract_wikipedia_fields,
+)
 
 progress_info = {}
 
@@ -74,7 +77,16 @@ def main():
                 1001,
                 "The Settlers of Catan",
                 0,
-                "Catan is a multiplayer board game.",
+                """Catan is a multiplayer board game.
+
+                {{Infobox game
+                | publication history = First edition 1995; second edition 2001
+                | players = 3–4
+                | setup time = 10 minutes
+                | random chance = Dice rolling
+                | website = https://example.com
+                }}
+                """,
             ),
             make_page(
                 1002,
@@ -207,6 +219,42 @@ def main():
             print("Progress callback: passed")
 
             print("\n=== ALL INTEGRATION ASSERTIONS PASSED ===")
+            print("\n=== WIKIPEDIA FIELD ENRICHMENT ===")
+
+            enriched_path = temp_path / "enriched"
+
+            enriched = extract_wikipedia_fields(
+                spark=spark,
+                input_path=output_path,
+                output_path=enriched_path,
+            )
+
+            enriched_rows = enriched.collect()
+
+            assert len(enriched_rows) == 3
+
+            enriched_catan = [
+                row for row in enriched_rows
+                if row.wiki_page_id == "1001"
+            ]
+
+            assert len(enriched_catan) == 2
+
+            for row in enriched_catan:
+                assert row.publication_history == (
+                    "First edition 1995; second edition 2001"
+                )
+                assert row.number_of_players == "3–4"
+                assert row.setup_time == "10 minutes"
+                assert row.chance == "Dice rolling"
+                assert row.official_website == "https://example.com"
+
+            print("Publication history: passed")
+            print("Number of players: passed")
+            print("Setup time: passed")
+            print("Chance: passed")
+            print("Official website: passed")
+            print("Fields preserved across shared-title associations: passed")
 
         finally:
             spark.stop()

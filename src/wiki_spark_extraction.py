@@ -57,6 +57,10 @@ GAME_FIELDS_SCHEMA = StructType([
     StructField("release_date", StringType(), nullable=True),
     StructField("number_of_players", StringType(), nullable=True),
     StructField("playing_time", StringType(), nullable=True),
+    StructField("publication_history", StringType(), nullable=True),
+    StructField("setup_time", StringType(), nullable=True),
+    StructField("chance", StringType(), nullable=True),
+    StructField("official_website", StringType(), nullable=True),
 ])
 
 
@@ -505,6 +509,10 @@ def rank_wikipedia_candidates(
         "release_date",
         "number_of_players",
         "playing_time",
+        "publication_history",
+        "setup_time",
+        "chance",
+        "official_website",
     ]
 
     # Keep one metadata record per Wikipedia page.

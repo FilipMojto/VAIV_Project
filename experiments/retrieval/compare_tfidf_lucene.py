@@ -1,5 +1,12 @@
 
-"""Compare formal TF-IDF configurations against Lucene BM25 rankings."""
+"""Compare formal TF-IDF configurations against Lucene BM25 rankings.
+    It compares the top-20 results for each query and configuration, calculating
+    the number of shared documents, the top-10 overlap, and rank correlation
+    metrics (Spearman's rho and Kendall's tau-b) for the shared documents.
+    So not precision/recall, but rather a comparison of the two ranking systems' outputs.
+    The enriched Lucene index is validated against the BGG-only index to ensure
+    that they produce identical top-20 rankings and scores for all queries.
+"""
 
 import argparse
 import csv

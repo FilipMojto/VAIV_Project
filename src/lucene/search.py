@@ -17,6 +17,27 @@ class LuceneSearcher:
         "play_time_max",
     }
 
+    WIKI_FIELDS = (
+        "wiki_short_description",
+        "wiki_designer",
+        "wiki_publisher",
+        "wiki_number_of_players",
+        "wiki_playing_time",
+        "wiki_publication_history",
+        "wiki_setup_time",
+        "wiki_chance",
+        "wiki_official_website",
+        "wiki_infobox_type",
+        "wiki_candidate_score",
+        "wiki_matched_page_id",
+        "wiki_matched_title",
+        "wiki_page_id",
+        "wiki_title",
+        "wiki_release_date",
+        "wiki_matched_variant_type",
+        "wiki_redirect_status",
+    )
+
     def __init__(self, index_path: str | Path):
         # Initialize the JVM before using Lucene classes.
         if lucene.getVMEnv() is None:
@@ -83,11 +104,21 @@ class LuceneSearcher:
         for hit in top_docs.scoreDocs:
             document = self.searcher.doc(hit.doc)
 
-            results.append({
+            result = {
                 "app_id": document.get("app_id"),
                 "game_title": document.get("game_title"),
                 "score": round(hit.score, 4),
-            })
+            }
+
+            # Retrieve stored BGG numeric attributes.
+            for field in self.NUMERIC_FIELDS:
+                result[field] = document.get(field)
+
+            # Retrieve stored Wikipedia attributes when available.
+            for field in self.WIKI_FIELDS:
+                result[field] = document.get(field)
+
+            results.append(result)
 
         return {
             "total_hits": top_docs.totalHits.value,

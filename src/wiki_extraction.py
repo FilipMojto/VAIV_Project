@@ -12,6 +12,8 @@ _REDIRECT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+
+
 class WikipediaPageParser:
     """Incrementally reconstruct complete Wikipedia page XML elements.
 
@@ -153,6 +155,138 @@ def resolve_redirect_target(
     }
 
 
+def _extract_publication_history(wiki_text: str) -> str | None:
+    """Extract publication details from the article's Publication section."""
+
+    heading_match = re.search(
+        r"^(={2,6})\s*Publication(?:\s+history)?\s*\1\s*$",
+        wiki_text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+
+    if not heading_match:
+        return None
+
+    heading_level = len(heading_match.group(1))
+    section_start = heading_match.end()
+
+    # Stop at the next heading of the same or higher level.
+    next_heading = re.compile(
+        r"^(={2,6})\s*.*?\s*\1\s*$",
+        flags=re.MULTILINE,
+    )
+
+    section_end = len(wiki_text)
+
+    for match in next_heading.finditer(wiki_text, section_start):
+        if len(match.group(1)) <= heading_level:
+            section_end = match.start()
+            break
+
+    section = wiki_text[section_start:section_end]
+    entries = []
+
+    for line in section.splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        # Extract list entries.
+        list_match = re.match(r"^[*#]+\s*(.+)$", line)
+
+        if list_match:
+            value = _clean_wiki_value(list_match.group(1))
+            if value:
+                value = re.sub(r"\[\s*\d+\s*\]", "", value)
+                entries.append(value.strip())
+            continue
+
+        # Extract data cells from wiki tables.
+        if line.startswith("|") and not line.startswith("|}"):
+            cells = re.split(r"\|\||!!", line.lstrip("|"))
+
+            for cell in cells:
+                value = _clean_wiki_value(cell)
+
+                if value:
+                    value = re.sub(r"\[\s*\d+\s*\]", "", value)
+                    value = value.strip()
+
+                    if value:
+                        entries.append(value)
+
+    # Remove duplicates while preserving order.
+    entries = list(dict.fromkeys(entries))
+
+    return " | ".join(entries) if entries else None
+
+
+def _extract_infobox_publication_history(value: str) -> str | None:
+    """Extract edition history from an infobox date parameter."""
+
+    if not value:
+        return None
+
+    value = html.unescape(value)
+    value = re.sub(r"<!--.*?-->", "", value, flags=re.DOTALL)
+
+    # Remove references before processing the edition entries.
+    value = re.sub(
+        r"<ref\b[^>]*>.*?</ref>",
+        "",
+        value,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    value = re.sub(
+        r"<ref\b[^>]*/\s*>",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+
+    # Replace Wikipedia date templates with their year.
+    value = re.sub(
+        r"\{\{\s*start date(?: and age)?\s*\|\s*(\d{4})(?:\s*\|[^{}]*)?\}\}",
+        r"\1",
+        value,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove the plainlist wrapper while retaining its contents.
+    value = re.sub(
+        r"^\s*\{\{\s*plainlist\s*\|",
+        "",
+        value,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r"\}\}\s*$", "", value)
+
+    entries = []
+
+    for line in value.splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        match = re.match(r"^[*#]+\s*(.+)$", line)
+
+        if match:
+            line = match.group(1)
+
+        cleaned = _clean_wiki_value(line)
+
+        if cleaned:
+            entries.append(cleaned)
+
+    # Remove duplicates without changing the original order.
+    entries = list(dict.fromkeys(entries))
+
+    return " | ".join(entries) if entries else None
+
+
 def _clean_wiki_value(value: str) -> str | None:
     """Convert a basic wikitext field value into readable plain text."""
 
@@ -247,6 +381,52 @@ def _extract_infobox_parameters(text: str) -> tuple[str | None, dict[str, str]]:
     return infobox_type, parameters
 
 
+
+def _extract_official_website(parameters: dict[str, str]) -> str | None:
+    """Extract and normalize a website URL from an infobox parameter."""
+
+    for alias in ("official website", "website", "url", "web"):
+        value = parameters.get(alias)
+
+        if not value:
+            continue
+
+        # Handle Wikipedia's {{URL|example.com}} template.
+        template_match = re.search(
+            r"\{\{\s*URL\s*\|\s*([^|{}]+)",
+            value,
+            flags=re.IGNORECASE,
+        )
+
+        if template_match:
+            value = template_match.group(1).strip()
+        else:
+            # Handle ordinary explicit URLs.
+            url_match = re.search(
+                r"https?://[^\s|<>{}\]]+",
+                value,
+                flags=re.IGNORECASE,
+            )
+
+            if url_match:
+                return url_match.group(0).rstrip(".,;")
+
+            # Clean other simple wikitext representations.
+            value = _clean_wiki_value(value) or ""
+
+        value = value.strip()
+
+        if re.fullmatch(
+            r"(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?",
+            value,
+            flags=re.IGNORECASE,
+        ):
+            return f"https://{value}"
+
+    return None
+
+
+
 def extract_wikipedia_game_fields(
     wiki_text: str | None,
 ) -> dict[str, str | None]:
@@ -260,6 +440,10 @@ def extract_wikipedia_game_fields(
         "release_date": None,
         "number_of_players": None,
         "playing_time": None,
+        "publication_history": None,
+        "setup_time": None,
+        "chance": None,
+        "official_website": None,
     }
 
     if not wiki_text:
@@ -279,6 +463,9 @@ def extract_wikipedia_game_fields(
     infobox_type, parameters = _extract_infobox_parameters(wiki_text)
     result["infobox_type"] = infobox_type
 
+
+    is_game_infobox = (infobox_type or "").casefold() == "game"
+
     field_aliases = {
         "designer": ("designer", "designers"),
         "publisher": ("publisher", "publishers"),
@@ -286,20 +473,50 @@ def extract_wikipedia_game_fields(
             "released",
             "release date",
             "release_date",
-            "date",
             "publication",
-        ),
+        ) + (() if is_game_infobox else ("date",)),
         "number_of_players": ("players", "number of players"),
         "playing_time": ("playing time", "playing_time"),
+        "publication_history": (
+            "publication history",
+            "editions",
+            "released",
+        ) + (("date",) if is_game_infobox else ("publication",)),
+        "setup_time": ("setup time", "setup_time", "setup"),
+        "chance": (
+            "random chance",
+            "random_chance",
+            "randomness",
+            "chance",
+        ),
     }
+
 
     for output_field, aliases in field_aliases.items():
         for alias in aliases:
             value = parameters.get(alias)
 
             if value:
-                result[output_field] = _clean_wiki_value(value)
+                if (
+                    output_field == "publication_history"
+                    and is_game_infobox
+                    and alias == "date"
+                ):
+                    result[output_field] = (
+                        _extract_infobox_publication_history(value)
+                    )
+                else:
+                    result[output_field] = _clean_wiki_value(value)
+
                 break
+
+
+
+    if result["publication_history"] is None:
+        result["publication_history"] = _extract_publication_history(
+            wiki_text
+        )
+    result["official_website"] = _extract_official_website(parameters)
 
     return result
 
@@ -321,11 +538,11 @@ def parse_wikipedia_page(page_xml: str) -> dict | None:
         return None
 
     revision = root.find("revision")
-    text = revision.findtext("text") if revision is not None else None
+    wiki_text = revision.findtext("text") if revision is not None else None
 
     return {
         "wiki_page_id": page_id,
         "wiki_title": title,
         "wiki_namespace": int(namespace),
-        "wiki_text": text,
+        "wiki_text": wiki_text,
     }

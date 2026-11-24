@@ -59,6 +59,9 @@ WIKI_TEXT_FIELDS = (
     "wiki_publisher",
     "wiki_number_of_players",
     "wiki_playing_time",
+    "wiki_publication_history",
+    "wiki_setup_time",
+    "wiki_chance",
 )
 
 WIKI_STORED_FIELDS = (
@@ -67,6 +70,7 @@ WIKI_STORED_FIELDS = (
     "wiki_page_id",
     "wiki_title",
     "wiki_release_date",
+    "wiki_official_website",
     "wiki_matched_variant_type",
     "wiki_redirect_status",
 )

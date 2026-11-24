@@ -1,5 +1,24 @@
-
 from src.wiki_extraction import extract_wikipedia_game_fields
+
+
+def test_extracts_publication_history_from_article_section():
+    text = """
+== Publication ==
+* First edition: 1995; 31 years ago<ref>Source 1</ref>
+* Second edition: 1996; 30 years ago<ref>Source 2</ref>
+* Third edition: 1997; 29 years ago
+
+== Gameplay ==
+Some unrelated text.
+"""
+
+    result = extract_wikipedia_game_fields(text)
+
+    assert "First edition: 1995" in result["publication_history"]
+    assert "Second edition: 1996" in result["publication_history"]
+    assert "Third edition: 1997" in result["publication_history"]
+    assert "Gameplay" not in result["publication_history"]
+    assert "Source 1" not in result["publication_history"]
 
 
 def test_extracts_short_description_and_infobox_fields():
@@ -48,6 +67,10 @@ def test_missing_fields_are_none():
     assert result["release_date"] is None
     assert result["number_of_players"] is None
     assert result["playing_time"] is None
+    assert result["publication_history"] is None
+    assert result["setup_time"] is None
+    assert result["chance"] is None
+    assert result["official_website"] is None
 
 
 def test_missing_article_text_returns_empty_fields():
@@ -70,13 +93,19 @@ def test_extracts_infobox_parameter_with_nested_template():
     assert result["publisher"] == "Example Publisher"
 
 
-def test_extracts_release_date_from_nested_date_template():
+def test_extracts_additional_game_fields():
     text = """
-    {{Infobox game
-    | date = {{Start date and age|1986}}
-    }}
-    """
+{{Infobox game
+| publication history = First edition 1995; second edition 2001
+| setup time = 10 minutes
+| random chance = Dice rolling
+| website = https://example.com
+}}
+"""
 
     result = extract_wikipedia_game_fields(text)
 
-    assert result["release_date"] == "1986"
+    assert result["publication_history"] == ("First edition 1995; second edition 2001")
+    assert result["setup_time"] == "10 minutes"
+    assert result["chance"] == "Dice rolling"
+    assert result["official_website"] == "https://example.com"
